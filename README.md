@@ -6,8 +6,11 @@ Identity infrastructure for a self-hosted stack: an LDAP directory
 of it, packaged as two independent NixOS modules.
 
 **Status: alpha.** Both modules are extracted, wired into `flake.nix`, and
-evaluate cleanly (see "Verifying" below). Neither has run a real NixOS VM
-test yet.
+evaluate cleanly (see "Verifying" below). Both are also running live in a
+real production deployment (a small single-node host, outside this repo),
+not just evaluated — the identity chain behind that deployment's mail
+stack has been verified end to end. Neither has an automated `nixosTest`
+in this repo's own CI yet.
 
 ## Scope
 
