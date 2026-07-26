@@ -27,6 +27,39 @@
       nixosModules.lldap = ./modules/lldap.nix;
       nixosModules."pocket-id" = ./modules/pocket-id.nix;
 
+      # ---------------------------------------------------------------
+      # Both modules composed into one NixOS system, from examples/host.
+      # They share the `services.nixid.*` namespace, so this is what
+      # catches a collision between them — the failure mode a per-module
+      # check cannot see by construction. It also exercises every
+      # assertion either module makes, which is where the interesting
+      # constraints live: a directory and the SSO provider in front of it
+      # have to agree about the base DN and about which port the provider
+      # binds against.
+      #
+      # This checks that the modules EVALUATE. It does not start lldap,
+      # does not bind a port, and does not perform a login — see the
+      # README for where that line sits.
+      # ---------------------------------------------------------------
+      checks = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          host = lib.nixosSystem {
+            inherit system;
+            modules = lib.attrValues self.nixosModules
+              ++ [ ./examples/host/configuration.nix ];
+          };
+        in
+        {
+          # The string context around the derivation path MUST be discarded. A
+          # store path inside a string is tracked as a build dependency, so
+          # keeping it would BUILD an entire NixOS system rather than evaluate
+          # one — minutes and a multi-gigabyte download versus seconds.
+          modules-evaluate =
+            pkgs.writeText "nixid-host-drvpath"
+              (builtins.unsafeDiscardStringContext host.config.system.build.toplevel.drvPath);
+        });
+
       formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixpkgs-fmt);
     };
 }

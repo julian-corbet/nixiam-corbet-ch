@@ -6,11 +6,18 @@ Identity infrastructure for a self-hosted stack: an LDAP directory
 of it, packaged as two independent NixOS modules.
 
 **Status: alpha.** Both modules are extracted, wired into `flake.nix`, and
-evaluate cleanly (see "Verifying" below). Both are also running live in a
-real production deployment (a small single-node host, outside this repo),
-not just evaluated — the identity chain behind that deployment's mail
-stack has been verified end to end. Neither has an automated `nixosTest`
-in this repo's own CI yet.
+checked in CI: `nix flake check` composes them into one NixOS system from
+[examples/host](examples/host), which exercises every assertion either module
+makes and — because both live under `services.nixid.*` — is the only thing that
+can catch a collision between them. Proven in the failing direction too:
+removing a required credential path or mistyping a value fails the check by name.
+
+Both are also running live in a real production deployment (a small single-node
+host, outside this repo), and the identity chain behind that deployment's mail
+stack has been verified end to end. That remains the stronger evidence — the
+check establishes that the modules evaluate, not that a login succeeds. There is
+still no automated `nixosTest` starting lldap, binding a port, or performing an
+OIDC round trip.
 
 ## Scope
 
@@ -178,11 +185,24 @@ nixid/
 
 ## Verifying
 
-Pure evaluation only — this repo ships no daemon to build and no VM test
-to run yet:
+Evaluation only — this repo ships no daemon to build, and no VM test yet:
 
 ```
-nix --extra-experimental-features "nix-command flakes" eval .#nixosModules --apply "m: builtins.attrNames m"
+nix flake check
+# builds checks.<system>.modules-evaluate: both modules composed into one
+# NixOS system, every assertion evaluated, nothing started
+```
+
+That is a real check rather than a smoke test: it forces the full NixOS
+evaluation, so a type error, a failed assertion, or a required value nobody
+supplied fails it. What it cannot tell you is whether lldap actually serves LDAP
+or whether an OIDC login completes — for that, see the live deployment noted
+under Status.
+
+To just list what the flake exposes:
+
+```
+nix eval .#nixosModules --apply "m: builtins.attrNames m"
 # => [ "lldap" "pocket-id" ]
 ```
 
