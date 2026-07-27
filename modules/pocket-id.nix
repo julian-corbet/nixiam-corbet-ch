@@ -41,10 +41,10 @@
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.nixid.pocketId;
+  cfg = config.nixid.pocketId;
 in
 {
-  options.services.nixid.pocketId = {
+  options.nixid.pocketId = {
     enable = lib.mkEnableOption "pocket-id OIDC/SSO identity provider";
 
     package = lib.mkPackageOption pkgs "pocket-id" {

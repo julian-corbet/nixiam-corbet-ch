@@ -29,7 +29,7 @@
 
       # ---------------------------------------------------------------
       # Both modules composed into one NixOS system, from examples/host.
-      # They share the `services.nixid.*` namespace, so this is what
+      # They share the `nixid.*` namespace, so this is what
       # catches a collision between them — the failure mode a per-module
       # check cannot see by construction. It also exercises every
       # assertion either module makes, which is where the interesting

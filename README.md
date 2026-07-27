@@ -8,7 +8,7 @@ of it, packaged as two independent NixOS modules.
 **Status: alpha.** Both modules are extracted, wired into `flake.nix`, and
 checked in CI: `nix flake check` composes them into one NixOS system from
 [examples/host](examples/host), which exercises every assertion either module
-makes and — because both live under `services.nixid.*` — is the only thing that
+makes and — because both live under `nixid.*` — is the only thing that
 can catch a collision between them. Proven in the failing direction too:
 removing a required credential path or mistyping a value fails the check by name.
 
@@ -109,7 +109,7 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
     inputs.nixid.nixosModules."pocket-id"
   ];
 
-  services.nixid.lldap = {
+  nixid.lldap = {
     enable = true;
     domain = "example.org";                       # placeholder — your real domain
     jwtSecretFile = "/run/secrets/lldap-jwt";
@@ -117,7 +117,7 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
     keySeedEnvFile = "/run/secrets/lldap-seed";
   };
 
-  services.nixid.pocketId = {
+  nixid.pocketId = {
     enable = true;
     publicUrl = "https://id.example.org";
     encryptionKeyFile = "/run/secrets/pocket-id-encryption-key";
@@ -132,7 +132,7 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
 
 ## Options reference
 
-`services.nixid.lldap.*` (`modules/lldap.nix`):
+`nixid.lldap.*` (`modules/lldap.nix`):
 
 - `enable`, `package` (a pinning caveat re: SQLite schema versioning lives
   on this option's own description).
@@ -153,7 +153,7 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
   real DynamicUser-vs-tmpfiles-ordering failure this exists to prevent.
 - `databaseUrl`, `stateDir`, `stateDirIsBindMount`, `dependsOnUnits`.
 
-`services.nixid.pocketId.*` (`modules/pocket-id.nix`):
+`nixid.pocketId.*` (`modules/pocket-id.nix`):
 
 - `enable`, `package`.
 - `publicUrl` — no default (see the option description for why a silently

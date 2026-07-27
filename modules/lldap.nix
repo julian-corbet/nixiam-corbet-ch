@@ -79,7 +79,7 @@
 with lib;
 
 let
-  cfg = config.services.nixid.lldap;
+  cfg = config.nixid.lldap;
 
   # Shared by `baseDn`'s default and (indirectly, via `domain`) `adminEmail`'s.
   # Not shared code with any other module in this repo -- there is no shared
@@ -120,7 +120,7 @@ let
   '';
 in
 {
-  options.services.nixid.lldap = {
+  options.nixid.lldap = {
     enable = mkEnableOption ''
       the LDAP identity directory (implemented by lldap) backing this
       repo's identity infrastructure
@@ -162,8 +162,8 @@ in
       default =
         if cfg.domain == null then
           throw ''
-            services.nixid.lldap.baseDn has no default because
-            services.nixid.lldap.domain is not set. Either set `domain`
+            nixid.lldap.baseDn has no default because
+            nixid.lldap.domain is not set. Either set `domain`
             (e.g. "example.com") so a base DN can be derived from it, or
             set `baseDn` explicitly (e.g. "dc=example,dc=com").
           ''
@@ -178,7 +178,7 @@ in
         directory client, an OIDC/SSO provider's LDAP sync) needs to agree
         on this exact value; if you run more than one such consumer, set
         this once and have the others reference
-        `config.services.nixid.lldap.baseDn` rather than repeating the
+        `config.nixid.lldap.baseDn` rather than repeating the
         literal string, so the two can never silently drift apart. Note
         that pocket-id.nix in this same repo is NOT such a consumer at
         eval time -- its own LDAP-sync base DN is entered by hand into
@@ -204,8 +204,8 @@ in
       default =
         if cfg.domain == null then
           throw ''
-            services.nixid.lldap.adminEmail has no default because
-            services.nixid.lldap.domain is not set. Either set `domain`
+            nixid.lldap.adminEmail has no default because
+            nixid.lldap.domain is not set. Either set `domain`
             (e.g. "example.com"), or set `adminEmail` explicitly.
           ''
         else "admin@${cfg.domain}";
@@ -515,7 +515,7 @@ in
     # a wrong name here means a firewall rule is silently inert, not that
     # the service itself is broken.
     systemd.services.nixid-lldap-interface-check = mkIf (cfg.exposeOnInterfaces != [ ]) {
-      description = "Check that services.nixid.lldap.exposeOnInterfaces names live interfaces";
+      description = "Check that nixid.lldap.exposeOnInterfaces names live interfaces";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];

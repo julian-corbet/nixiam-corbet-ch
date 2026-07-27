@@ -4,7 +4,7 @@
 # This is not a machine anyone would run. Every domain is under example.com,
 # every secret is a path that does not exist, and the root filesystem is tmpfs.
 # It exists so the directory and the SSO provider in front of it can be
-# type-checked together — they share the `services.nixid.*` namespace, and a
+# type-checked together — they share the `nixid.*` namespace, and a
 # collision between the two is exactly what a per-module check cannot see.
 { ... }:
 {
@@ -16,7 +16,7 @@
   # them can be a value this module invents. Losing the key seed in particular
   # is not recoverable by resetting anything — it derives the encryption of
   # stored secrets.
-  services.nixid.lldap = {
+  nixid.lldap = {
     enable = true;
     domain = "example.com";
     baseDn = "dc=example,dc=com";
@@ -26,7 +26,7 @@
   };
 
   # The OIDC/SSO provider in front of the directory.
-  services.nixid.pocketId = {
+  nixid.pocketId = {
     enable = true;
 
     # Load-bearing: OIDC redirect URIs and issuer discovery are built from it,
