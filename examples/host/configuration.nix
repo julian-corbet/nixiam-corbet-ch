@@ -39,6 +39,26 @@
     encryptionKeyFile = "/run/secrets/example-pocketid-encryption-key";
   };
 
+  # The POSIX identity registry. Pure data -- see modules/posix.nix's own
+  # header -- composed here purely to exercise it under `modules-evaluate`
+  # alongside the two service modules above, since all three share the
+  # `nixid.*` namespace. One `"native"` identity and one `"puid"` identity,
+  # so the check's evaluation actually walks both branches of the
+  # generated `podSecurity` below rather than just one.
+  nixid.posix = {
+    enable = true;
+    domain = "example.com";
+    identities = {
+      example-app = {
+        uid = 3000;
+      };
+      example-linuxserver-app = {
+        uid = 3001;
+        variant = "puid";
+      };
+    };
+  };
+
   # ── Stubs NixOS demands of any bootable system ───────────────────────────
   # tmpfs on / could never boot a real machine, which is the point: this exists
   # to type-check modules, not to describe hardware.

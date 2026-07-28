@@ -28,6 +28,19 @@
       nixosModules."pocket-id" = ./modules/pocket-id.nix;
 
       # ---------------------------------------------------------------
+      # A third, structurally different module: pure data, no service.
+      # The fleet-wide POSIX uid/gid registry (and its generated
+      # Kubernetes securityContext twin) that a separate dataset-shape
+      # repo consumes -- never the other way around, see the module's
+      # own header for why that direction is load-bearing. Composed into
+      # the same `modules-evaluate` check below alongside the two service
+      # modules purely because they already share the `nixid.*`
+      # namespace; it has no options in common with either and asserts
+      # nothing about them.
+      # ---------------------------------------------------------------
+      nixosModules.posix = ./modules/posix.nix;
+
+      # ---------------------------------------------------------------
       # Both modules composed into one NixOS system, from examples/host.
       # They share the `nixid.*` namespace, so this is what
       # catches a collision between them — the failure mode a per-module
