@@ -37,6 +37,12 @@
 # settings.APP_URL`/`TRUST_PROXY`/`PORT`/`HOST`, the `ENCRYPTION_KEY`
 # credential, a pinned uid/gid) governs how the pocket-id PROCESS starts up
 # -- not what it does once it is running.
+#
+# This repo also ships modules/posix.nix, a fleet-wide POSIX uid/gid registry that answers a
+# completely different question (a host/container uid/gid, not a human's login credential) and
+# has no relationship to this module at all beyond sharing a repo and the `nixid.*` prefix --
+# importing `nixosModules."pocket-id"` never pulls it in, and vice versa. See README's "Two
+# scopes, one repo" section if that cohabitation is surprising.
 
 { config, lib, pkgs, ... }:
 

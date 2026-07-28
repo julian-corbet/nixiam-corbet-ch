@@ -37,6 +37,17 @@
 #      ever imports a path, a pool name, or a `pkgs.writeShellScript`, that
 #      is this design failing, not a convenience.
 #
+# This is no longer just an argument in prose. checks/default.nix's `posix-purity` group fails
+# `nix flake check` if this file's own function ever binds a `pkgs` argument, or if composing
+# `nixosModules.posix` alone (see examples/registry-only-host) ever changes `systemd.services` or
+# `environment.systemPackages` relative to the identical system with this module absent entirely
+# -- see that file's own header for exactly what it proves and how it proves its own proof isn't
+# vacuous. This repo also ships two real services (lldap.nix, pocket-id.nix) that answer a
+# completely different question -- a human's login credential, not a host/container uid/gid --
+# and share only this repo and the `nixid.*` prefix with this module. See README's "Two scopes,
+# one repo" section for why that cohabitation is fine precisely because this header's promise is
+# both true and now checked, not merely asserted.
+#
 # Two neither-here-nor-there notes on what a "pure data" identity registry
 # deliberately does NOT need to provide, because both of this module's real
 # consumers work directly off the plain integer, never off a resolved

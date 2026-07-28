@@ -1,5 +1,5 @@
 {
-  description = "Identity infrastructure for a self-hosted stack: an LDAP directory (lldap) and the OIDC/SSO provider (pocket-id) in front of it. Not a mail package -- mail, a git forge, a Kubernetes dashboard, and anything else that authenticates users are all just consumers of this repo, never the other way around.";
+  description = "Two independent things sharing one flake, never one repo's worth of coupling: an identity-provider STACK (an LDAP directory via lldap, and the pocket-id OIDC/SSO provider in front of it) and a fleet-wide POSIX uid/gid REGISTRY (posix.nix) -- pure data, no daemon, importable on its own by the smallest host in a fleet. See README's \"Two scopes, one repo\" section for why the registry is not a separate repository, and checks/default.nix's `posix-purity` group for the mechanical proof that importing it alone never pulls in the stack.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -10,6 +10,7 @@
       lib = nixpkgs.lib;
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = lib.genAttrs supportedSystems;
+      pkgsFor = system: import nixpkgs { inherit system; };
     in
     {
       # ---------------------------------------------------------------
@@ -32,47 +33,29 @@
       # The fleet-wide POSIX uid/gid registry (and its generated
       # Kubernetes securityContext twin) that a separate dataset-shape
       # repo consumes -- never the other way around, see the module's
-      # own header for why that direction is load-bearing. Composed into
-      # the same `modules-evaluate` check below alongside the two service
-      # modules purely because they already share the `nixid.*`
-      # namespace; it has no options in common with either and asserts
-      # nothing about them.
+      # own header for why that direction is load-bearing.
+      #
+      # This is a genuinely different KIND of "identity" than the two
+      # modules above -- a host/container uid/gid, not a human's login
+      # credential -- sharing this repo and the `nixid.*` prefix by
+      # administrative convenience, not by any relationship between what
+      # they do. Import this on its own (see
+      # examples/registry-only-host) and nothing from lldap.nix or
+      # pocket-id.nix is ever evaluated, built, or installed -- see
+      # README's "Two scopes, one repo" for why that already-true
+      # property is what makes cohabiting one repo acceptable, and
+      # checks/default.nix's `posix-purity` group for where it is
+      # mechanically enforced rather than merely argued.
       # ---------------------------------------------------------------
       nixosModules.posix = ./modules/posix.nix;
 
-      # ---------------------------------------------------------------
-      # Both modules composed into one NixOS system, from examples/host.
-      # They share the `nixid.*` namespace, so this is what
-      # catches a collision between them — the failure mode a per-module
-      # check cannot see by construction. It also exercises every
-      # assertion either module makes, which is where the interesting
-      # constraints live: a directory and the SSO provider in front of it
-      # have to agree about the base DN and about which port the provider
-      # binds against.
-      #
-      # This checks that the modules EVALUATE. It does not start lldap,
-      # does not bind a port, and does not perform a login — see the
-      # README for where that line sits.
-      # ---------------------------------------------------------------
       checks = forAllSystems (system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          host = lib.nixosSystem {
-            inherit system;
-            modules = lib.attrValues self.nixosModules
-              ++ [ ./examples/host/configuration.nix ];
-          };
-        in
-        {
-          # The string context around the derivation path MUST be discarded. A
-          # store path inside a string is tracked as a build dependency, so
-          # keeping it would BUILD an entire NixOS system rather than evaluate
-          # one — minutes and a multi-gigabyte download versus seconds.
-          modules-evaluate =
-            pkgs.writeText "nixid-host-drvpath"
-              (builtins.unsafeDiscardStringContext host.config.system.build.toplevel.drvPath);
+        import ./checks {
+          pkgs = pkgsFor system;
+          inherit lib nixpkgs system;
+          nixidModules = self.nixosModules;
         });
 
-      formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixpkgs-fmt);
+      formatter = forAllSystems (system: (pkgsFor system).nixpkgs-fmt);
     };
 }

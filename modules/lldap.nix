@@ -73,6 +73,12 @@
 # unrelated bump, breaking evaluation for days). `package` below is a plain
 # `pkgs.lldap` by default; see that option for the one real caveat that
 # survives the simplification.
+#
+# This repo also ships modules/posix.nix, a fleet-wide POSIX uid/gid registry that answers a
+# completely different question (a host/container uid/gid, not a human's login credential) and
+# has no relationship to this module at all beyond sharing a repo and the `nixid.*` prefix --
+# importing `nixosModules.lldap` never pulls it in, and vice versa. See README's "Two scopes,
+# one repo" section if that cohabitation is surprising.
 
 { config, lib, pkgs, ... }:
 
