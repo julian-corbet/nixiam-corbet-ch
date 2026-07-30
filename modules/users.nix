@@ -138,6 +138,32 @@ let
         '';
       };
 
+      # ── person or mailbox: the same directory holds both, and they are not alike ──────────
+      #
+      # Derived from the live directory rather than guessed: of 18 entries, 11 belong to exactly
+      # one group (`mail`) and nothing else. Those exist because the mail server authenticates
+      # against this directory -- they are mailboxes, not people. Modelling them as people makes
+      # two different assertions wrong at once: a mailbox legitimately has no SSO group membership,
+      # while a person with none is usually a provisioning mistake worth noticing.
+      #
+      # It also separates the blast radii. Removing a person locks a human out of every service
+      # behind SSO simultaneously. Removing a mailbox stops mail for one address. Both need the
+      # explicit acknowledgement below, but a reviewer reading a diff should be able to see which
+      # of the two they are approving without cross-referencing the group list.
+      kind = mkOption {
+        type = types.enum [ "person" "mailbox" ];
+        default = "person";
+        example = "mailbox";
+        description = ''
+          Whether this entry is a human who logs in, or an address the mail server authenticates.
+
+          Defaults to `person`, deliberately the more cautious reading: an entry misdeclared as a
+          person merely attracts a membership warning it did not need, whereas one misdeclared as a
+          mailbox would suppress exactly the check that catches a human provisioned with no access
+          at all.
+        '';
+      };
+
       groups = mkOption {
         type = types.listOf types.str;
         default = [ ];
