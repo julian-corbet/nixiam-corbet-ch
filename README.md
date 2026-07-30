@@ -139,7 +139,7 @@ already removed once for a disk
 `disks`) and once for an app/container identity (`posix.identities` above).
 `users.nix` is the same fix applied to a HUMAN, with one line drawn
 deliberately, because the failure mode on the wrong side of it is worse
-than a drifted uid: lldap sits behind this fleet's SSO, so getting the
+than a drifted uid: lldap sits behind the SSO shared across hosts, so getting the
 CREDENTIAL half of this wrong does not just corrupt a file, it locks a
 real person out of everything at once, or leaks the one secret that
 unlocks every directory entry simultaneously.

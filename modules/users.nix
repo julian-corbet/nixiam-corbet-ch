@@ -20,7 +20,7 @@
 # nix* family already removed once for a disk (`nixstorage.disks`) and once for an app/container
 # identity (`nixiam.posix.identities`). This module is the same fix applied to a HUMAN, with one
 # line drawn deliberately, because the failure mode on the wrong side of that line is worse than a
-# drifted uid: lldap sits behind this fleet's SSO, so getting the CREDENTIAL half of this wrong
+# drifted uid: lldap sits behind the SSO shared across hosts, so getting the CREDENTIAL half of this wrong
 # does not just corrupt a file, it locks a real person out of everything at once, or leaks the one
 # secret that unlocks every directory entry simultaneously.
 #
@@ -230,7 +230,7 @@ let
           and still reads to whoever inherits this file next, months later,
           wondering why an account is gone.
 
-          lldap sits behind this fleet's SSO -- deleting a directory entry
+          lldap sits behind the SSO shared across hosts -- deleting a directory entry
           locks that human out of EVERY service behind it simultaneously,
           not just one, and there is no automatic undo once that mutation
           lands. This is the ONE supported path to that outcome, and it is

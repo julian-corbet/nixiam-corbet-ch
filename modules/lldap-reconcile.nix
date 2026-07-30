@@ -19,7 +19,7 @@
 # orphan — see the group-creation step below for that comparison spelled out where it matters.
 #
 # WHAT IT NEVER DOES, AND WHY THIS IS THE LOAD-BEARING DECISION IN THIS FILE. lldap sits behind
-# this fleet's SSO: removing a directory entry does not tidy up one service, it locks that human
+# the SSO shared across hosts: removing a directory entry does not tidy up one service, it locks that human
 # out of every service behind that SSO simultaneously, with no automatic undo once the mutation
 # lands. So an lldap user or membership this table does not (or no longer) declare is NEVER
 # removed by this service. Ever. By default. Full stop. It is reported — loudly, every tick, as a
