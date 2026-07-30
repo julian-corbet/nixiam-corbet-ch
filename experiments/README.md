@@ -244,9 +244,8 @@ primitives common to every module system built on `lib.evalModules`. This
 repo pulls in no `nix-darwin` input and has no check that actually composes
 the module into a `darwinConfiguration` the way `checks/default.nix` does
 for the other two backends — the alias is a reasoned guess, not a proven
-one, the exact gap [nixmachines' own experiment
-001](https://github.com/julian-corbet/nixmachines-corbet-ch) flags for the
-same shape of claim.
+one, the exact gap a sibling pure-data repo's own experiment 001 flags for
+the same shape of claim.
 
 **Hypothesis:** nix-darwin's module system is close enough to NixOS's own
 (both are `lib.evalModules` underneath) that a module this simple — no
@@ -307,8 +306,8 @@ had, not a benchmark taken against this module specifically.
 
 **Method sketch:** generate a synthetic fixture with a few hundred
 `identities` entries (`builtins.genList`-built, never committed as a real
-inventory — this repo ships schema, not data, same rule nixmachines'
-README states for its own registry) and time `nix eval` against the
+inventory — this repo ships schema, not data, the same rule nixhost's own
+`lib/hosts.nix` states for its host tree) and time `nix eval` against the
 `podSecurity` default and the collision assertions on it.
 
 **Status:** open.

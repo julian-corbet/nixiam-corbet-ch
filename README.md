@@ -512,11 +512,12 @@ anywhere in this repo).
 `nixiam.posix.*` (see ["Why posix folded back in"](#why-posix-folded-back-in)
 above for the exact paths) — never the reverse; this repo must never learn
 a dataset path, a mail user, or a device name.
-[nixmachines](https://github.com/julian-corbet/nixmachines-corbet-ch) is
-the sibling pure-data registry `posix.nix`'s own `flake.nix` shape (the
-same file exported as `nixosModules`/`systemManagerModules`/`darwinModules`)
-and testing discipline (`posix-purity`-style mechanical enforcement,
-backend-parity checks) were both copied from.
+`posix.nix`'s own `flake.nix` shape (the same file exported as
+`nixosModules`/`systemManagerModules`/`darwinModules`) and testing discipline
+(`posix-purity`-style mechanical enforcement, backend-parity checks) follow
+the same pattern [nixhost](https://github.com/julian-corbet/nixhost-corbet-ch),
+the sibling pure-data namespace root, uses for the identical three-backend
+shape.
 
 ## License
 

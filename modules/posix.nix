@@ -58,9 +58,9 @@
 # module is exported as `nixosModules`, `systemManagerModules`, AND `darwinModules` from the exact
 # same file (see flake.nix), and a `pkgs` argument or a `systemd.services` write is exactly the
 # kind of thing that evaluates fine on NixOS and then fails outright, or silently does nothing, the
-# moment the same file is composed under system-manager or nix-darwin instead -- see nixmachines's
-# own `modules/machines.nix` header for the sibling repo this "one file, every backend" shape and
-# the purity discipline behind it were both copied from.
+# moment the same file is composed under system-manager or nix-darwin instead -- see nixhost's own
+# `modules/nixhost.nix` header for a sibling repo that follows this exact "one file, every backend"
+# shape and purity discipline for the identical reason.
 #
 # Two neither-here-nor-there notes on what a "pure data" identity registry
 # deliberately does NOT need to provide, because both of this module's real
