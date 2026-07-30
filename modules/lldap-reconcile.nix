@@ -129,6 +129,15 @@ let
       (_: u: { inherit (u) displayName email groups; })
       ensureUsers;
     pruneAcknowledged = pruneAcknowledged;
+
+    # Groups the directory must have EVEN IF NOBODY IS IN THEM. Unioned with the
+    # membership-derived set below rather than replacing it, because both are real: a group can be
+    # live because someone is in it, or live because an application maps a role onto it, and the
+    # second kind is invisible from here (that mapping lives in the app's own config, often sealed).
+    # A zero-member group is not a dead one.
+    # Read defensively: this module is the MECHANISM and users.nix is the REGISTRY, and a host may
+    # import one without the other. Same idiom every cross-module read in this family uses.
+    standaloneGroups = attrNames (config.nixiam.lldapGroups or { });
   };
 
   modelFile = pkgs.writeText "nixiam-lldap-reconcile-model.json" (builtins.toJSON renderedModel);
@@ -208,14 +217,16 @@ let
     declared_ids=$(jq -r '.ensure | keys[]' "$MODEL")
     prune_ids=$(jq -r '.pruneAcknowledged[]' "$MODEL")
 
-    # ── 1. groups: create any group a declared person names that lldap does not have yet.
+    # ── 1. groups: create any group that is declared -- either named by a declared person's
+    # membership list, or declared standalone in nixiam.lldapGroups because an application maps a
+    # role onto it while it currently holds no members.
     # `createGroup` is lldap's own idempotent-by-check create-by-display-name mutation (see
     # header). Auto-creating here, rather than only warning the way netbird-group-reconcile.nix
     # does for a MISSING NetBird group, is deliberate and NOT the same call made twice: a NetBird
     # group's id is referenced by ACL policies that a recreate would orphan; an lldap group
     # carries no such external reference, and lldap's own official bootstrap.sh creates missing
     # groups on sight for exactly that reason. ──────────────────────────────────────────────────
-    wanted_groups=$(jq -r '[.ensure[].groups[]] | unique | .[]' "$MODEL")
+    wanted_groups=$(jq -r '([.ensure[].groups[]] + .standaloneGroups) | unique | .[]' "$MODEL")
     if [ -n "$wanted_groups" ]; then
       while IFS= read -r g; do
         [ -n "$g" ] || continue

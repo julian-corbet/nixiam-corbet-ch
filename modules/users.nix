@@ -285,6 +285,45 @@ let
     (attrNames cfg);
 in
 {
+  # ── Groups exist in their own right, not merely as a side effect of membership ──────────────
+  #
+  # Learned from the live directory, and from being wrong about it: three of its 47 groups have ZERO
+  # members, and a zero-member group is NOT dead. A group is live when something REFERENCES it -- an
+  # application's role mapping -- not when someone currently sits in it. `planka_owner` with no
+  # members means "nobody currently holds owner", not "nobody can", and the mapping that makes it
+  # real lives in that application's own configuration, not anywhere this module can see.
+  #
+  # Deriving the group set from users' membership lists alone therefore cannot express reality: an
+  # empty-but-live group is invisible to the declaration, and would be a deletion candidate the day
+  # anyone adds a prune mode. Declaring groups independently closes that.
+  options.nixiam.lldapGroups = mkOption {
+    type = types.attrsOf (types.submodule ({ name, ... }: {
+      options.purpose = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "role mapping for a project-management app";
+        description = ''
+          What this group is FOR, in the operator's own words. Never branched on by this module.
+
+          It exists because the thing that makes a group live -- which application maps a role onto
+          it -- is invisible from here: it lives in that application's own configuration, often in a
+          sealed secret. Without a note, a zero-member group looks exactly like an abandoned one, and
+          somebody eventually deletes it. This field is the one place that context can be written
+          down next to the fact.
+        '';
+      };
+    }));
+    default = { };
+    description = ''
+      Groups that must exist in the directory, independent of whether anyone is in them.
+
+      What breaks without it: a group referenced by an application's role mapping but currently
+      holding no members would not be declared at all, so it could not be created on a fresh
+      directory and would appear undeclared to any drift report -- flagged, or worse eventually
+      pruned, despite being load-bearing for an app nobody thought to check.
+    '';
+  };
+
   options.nixiam.users = mkOption {
     type = types.attrsOf userSubmodule;
     default = { };
