@@ -17,7 +17,7 @@ that is a single anecdote ("it worked, end to end, once"), not a
 reproducible measurement, so it closes none of the questions below on its
 own.
 
-All open; nothing has been run against these specifically — no fleet host
+All open; nothing has been run against these specifically — no host
 in this repo's own test matrix exercises a missing-secret boot, a schema
 version jump, an interface rename, or a v1→v2 upgrade under CI.
 
