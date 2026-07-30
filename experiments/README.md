@@ -336,6 +336,146 @@ distinction — not silently reused as a near-fit for one of the existing two.
 
 **Status:** open.
 
+## 012 — lldap-reconcile idempotency + deletion-refusal, executed against a local mock
+
+**Question:** `modules/lldap-reconcile.nix`'s header claims two properties of its own generated
+script: running it twice against unchanged state performs zero mutation calls the second time,
+and an lldap user/membership this repo's `nixiam.users` does not declare is reported but never
+removed, in every case except the one explicit, per-person, written-reason opt-in
+(`acknowledgeRemoval`). Neither claim is provable by `nix flake check` alone (evaluation-only,
+per this repo's own established discipline -- see the main README's "Verifying" section) and
+neither had been exercised against anything running at the time they were written.
+
+**Method:** `experiments/mock-lldap.py`, a ~180-line local stand-in for lldap's own two HTTP
+endpoints (`/auth/simple/login`, `/api/graphql`), implementing exactly the query/mutation shapes
+`lldap-reconcile.nix`'s script calls (learned from lldap's own upstream `schema.graphql` +
+`scripts/bootstrap.sh` -- see that module's header for the precise citations), plus three
+test-only introspection endpoints (`/_seed`, `/_state`, `/_calls`, `/_reset_calls`).
+`experiments/lldap-reconcile-harness.nix` builds the REAL, unmodified
+`nixiam-lldap-reconcile` script from `modules/lldap-reconcile.nix` (not a reimplementation)
+against a fixed `nixiam.users` fixture (alice: wholly absent; bob: exists but missing his
+declared group, and already belongs to an undeclared extra group; carol: `enable = false` +
+`acknowledgeRemoval` set, already exists) and a "mallory" user seeded directly into the mock,
+never declared in Nix at all. `experiments/run-lldap-reconcile-proof.sh` orchestrates: start the
+mock, seed it, build the script, run it, inspect `/_calls`/`/_state`, reset the call log, run it
+again, inspect again.
+
+**Result:** run 1 performed exactly the six expected mutations (create alice, create groups
+`admins`/`readers`, add alice→admins, add bob→readers, delete carol) and warned about (never
+touched) mallory and bob's undeclared extra membership, exiting non-zero. Run 2, against the
+resulting state, performed **zero** mutation calls and still exited non-zero (mallory and bob's
+extra membership are still undeclared, reported every tick by design) -- the idempotency claim
+holds. Mallory was still present in the mock's state after both runs -- the deletion-refusal
+claim holds in the "never heard of this name" direction. Carol was actually removed after run 1
+-- the one acknowledged-opt-in path actually deletes when asked to. Full transcript in this
+finding's own write-up: `studies/README.md`.
+
+**Status:** closed, written up in `studies/README.md`. Ran against a local mock only, on loopback,
+torn down within the same script invocation -- never against a live lldap; see experiments
+013-014 below for what this specifically does NOT close.
+
+## 013 — whether a narrower lldap group than the full admin account authorizes every mutation this module calls
+
+**Question:** `lldap-reconcile.nix`'s own `adminUsername` option notes that lldap ships a
+built-in `lldap_password_manager` group (confirmed to exist by NAME only, from it being excluded
+as "not redundant" in lldap's own `scripts/bootstrap.sh`), and speculates it might be a
+lower-blast-radius credential than the full admin account for this reconciler's own use. Whether
+a member of that group can actually call `createUser`/`createGroup`/`addUserToGroup`/`deleteUser`
+was never checked against lldap's own access-control code or a running instance.
+
+**Hypothesis:** likely NOT sufficient -- the name suggests password-reset-only privilege, and
+lldap's own bootstrap tooling always authenticates as the full admin account for these mutations
+-- but this is inferred from the name and from bootstrap.sh's own practice, not verified against
+lldap's `crates/access-control` source or a real server's actual authorization response.
+
+**Method sketch:** read lldap's own `crates/access-control/src/lib.rs` (cited already, second-hand,
+in this repo's own `modules/lldap.nix`) for what each built-in group actually authorizes per
+mutation, or attempt the four mutations this module calls while authenticated as a
+`lldap_password_manager` member against a real or mocked-with-real-ACL-logic instance.
+
+**Status:** open.
+
+## 014 — `deleteUser`'s real effect on group membership, never observed against real lldap
+
+**Question:** `experiments/mock-lldap.py`'s own `deleteUser` implementation simply removes the
+user row; it was WRITTEN to do that because it seemed the obvious behavior, not because lldap's
+own `deleteUser` mutation was read or observed to behave that way. Real lldap stores group
+membership as an LDAP-level relationship (from each `Group`'s own `users` field in
+`schema.graphql`) -- whether deleting a user cleanly retracts every group's membership list, or
+whether some stale reference can survive a delete under any real-world condition, was never
+checked against actual lldap source or a running instance.
+
+**Hypothesis:** very likely clean (a `User` row disappearing should cascade to any `Group` that
+referenced it, the ordinary case for an LDAP-backed store), but "very likely" is exactly the
+category of confidence this repo's own testing culture treats as provisional elsewhere (see
+experiment 007's identical framing for POSIX uid/gid auto-allocation).
+
+**Method sketch:** against a real (or nixosTest-launched) lldap instance: create a user, add them
+to a group, delete the user, then query that group's own `users` field and confirm it no longer
+lists them.
+
+**Status:** open.
+
+## 015 — concurrent reconcile ticks racing lldap's own createGroup/createUser
+
+**Question:** `lldap-reconcile.nix`'s script checks-then-creates (query current state, mutate
+only what is missing) rather than trusting `createUser`/`createGroup` to be silently idempotent
+on their own -- matching lldap's own official `scripts/bootstrap.sh` discipline (see that
+module's header). Neither this module nor `experiments/mock-lldap.py`'s own single-threaded
+mock exercises what happens if TWO reconcile ticks (a manual `systemctl start` racing the timer,
+say) hit `createGroup`/`createUser` for the SAME missing name at genuinely the same moment against
+a real, concurrently-request-serving lldap.
+
+**Hypothesis:** lldap's own database layer likely rejects the second, concurrent create (a
+unique-constraint violation surfaced as a GraphQL error), which this script already treats as a
+non-fatal, logged, retried-next-tick failure (see `mutation_error` handling) -- but this is
+inferred from ordinary relational-database behavior, not observed.
+
+**Method sketch:** against a real lldap instance, fire two `createGroup` requests for the
+identical, previously-absent name at the same time and confirm exactly one succeeds while the
+other returns a GraphQL error this script's own handling already tolerates, rather than a crash
+or a duplicate group.
+
+**Status:** open.
+
+## 016 — `modules/users.nix` offers no `systemManagerModules`/`darwinModules`, unlike `posix.nix`
+
+**Question:** `users.nix` is pure data (no `pkgs` argument) exactly like `posix.nix` in this same
+repo, which qualifies it for the identical `systemManagerModules`/`darwinModules` export
+`posix.nix` already carries (unproven itself -- see experiment 008 -- but offered). `users.nix`
+is exported as `nixosModules.users` only. Whether a system-manager or nix-darwin host has any real
+use for a human-identity table whose only current consumer (`lldap-reconcile.nix`) is NixOS-only
+was reasoned about in the module's own header, not tested.
+
+**Hypothesis:** the pure-data shape would almost certainly compose cleanly on either backend (the
+same reasoning experiment 008 already offers for `posix.nix`), but there is no concrete consumer
+yet that would need it -- unlike `posix.nix`'s uid/gid table, which Kubernetes pods and ZFS chown
+targets both already read today.
+
+**Method sketch:** if a system-manager or nix-darwin host ever wants a human-identity table
+independent of lldap (local Unix accounts, say), add the export and extend
+`checks/default.nix`'s `backend-parity` group to cover it, the same way `posix.nix` already does.
+
+**Status:** open.
+
+## 017 — two `nixiam.users` entries sharing one `posixIdentity` is not asserted against
+
+**Question:** `posix.nix`'s own `identities` already asserts uid/gid uniqueness AMONG
+identities; nothing in `modules/users.nix` asserts that two DIFFERENT declared humans cannot name
+the SAME `posixIdentity`. Whether that is ever a real mistake (two people who should never share a
+uid) or a legitimate shape (a shared service-account-like identity two humans both use) was not
+weighed against a real case.
+
+**Hypothesis:** almost certainly a mistake whenever it happens for two REAL humans (uid sharing
+means neither person's file ownership on a POSIX host distinguishes them at all), but this module
+does not have an opinion yet, and `checks/` proves nothing about it either way.
+
+**Method sketch:** decide whether to add a `duplicatesOf`-style assertion (mirroring `posix.nix`'s
+own uid-collision check, applied to `nixiam.users.*.posixIdentity` instead of `identities.*.uid`)
+the first time two declared humans actually collide, or preemptively, whichever comes first.
+
+**Status:** open.
+
 ## Renumbering history
 
 001–007 above are original to this file, from nixid's own

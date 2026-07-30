@@ -21,30 +21,41 @@
     in
     {
       # ---------------------------------------------------------------
-      # Three independently toggleable pieces under one `nixiam.*` namespace -- IAM in full: WHO a
-      # human is (lldap, the LDAP directory), how they PROVE it (pocket-id, the OIDC/SSO provider
-      # in front of that directory), and WHAT a host/container identity is allowed to touch
-      # (posix, the cross-host uid/gid registry + its derived Kubernetes securityContext). There
-      # is no shared "core" engine to opt into (unlike nixnet's core+providers shape) -- import
-      # any one on its own, lldap+pocket-id together for the common identity-provider pairing (see
-      # README for the one piece of that pairing that stays manual), or posix alone on a host that
-      # runs neither service at all.
+      # Five independently toggleable pieces under one `nixiam.*` namespace -- IAM in full: WHO a
+      # human is (lldap, the LDAP directory; users, the declarative human-identity registry
+      # projected into it), how they PROVE it (pocket-id, the OIDC/SSO provider in front of that
+      # directory), WHAT a host/container identity is allowed to touch (posix, the cross-host
+      # uid/gid registry + its derived Kubernetes securityContext), and how a declared human
+      # actually LANDS in the running directory (lldap-reconcile, the mechanism that reads `users`
+      # and converges it against lldap's own GraphQL API). There is no shared "core" engine to opt
+      # into (unlike nixnet's core+providers shape) -- import any one on its own, lldap+pocket-id
+      # together for the common identity-provider pairing (see README for the one piece of that
+      # pairing that stays manual), users+lldap-reconcile together for declarative human-identity
+      # provisioning, or posix alone on a host that runs no service at all.
       #
       # lldap and pocket-id are named after their actual upstream project, not an abstract role --
       # see each module's own header for why (a fake generic interface with exactly one
-      # implementation behind it documents a boundary that doesn't exist). posix is pure data with
-      # no upstream project behind it at all -- see its own header for why that boundary is
-      # load-bearing, and why it costs nothing for even the smallest host to import.
+      # implementation behind it documents a boundary that doesn't exist). posix and users are
+      # pure data with no upstream project behind either -- see their own headers for why that
+      # boundary is load-bearing, and why it costs nothing for even the smallest host to import.
+      # lldap-reconcile is the one piece here that is a mechanism rather than a table or a
+      # service-in-itself: it acts on `users`, against a running lldap, and nothing else in this
+      # repo may act on that table at all -- see modules/users.nix's own header for that split.
       # ---------------------------------------------------------------
       nixosModules.lldap = ./modules/lldap.nix;
       nixosModules."pocket-id" = ./modules/pocket-id.nix;
       nixosModules.posix = ./modules/posix.nix;
+      nixosModules.users = ./modules/users.nix;
+      nixosModules."lldap-reconcile" = ./modules/lldap-reconcile.nix;
 
-      # posix.nix only -- see its own header for why it, alone of the three, ports cleanly to
-      # every backend an operator manages: no `pkgs` argument, no `systemd.services`, nothing
-      # NixOS-specific to be unavailable from. lldap/pocket-id stay NixOS-only (see README's "What
-      # this deliberately does not do" for the specific system-manager barrier neither module has
-      # been assessed against).
+      # posix.nix only -- see its own header for why it ports cleanly to every backend an
+      # operator manages: no `pkgs` argument, no `systemd.services`, nothing NixOS-specific to be
+      # unavailable from. lldap/pocket-id stay NixOS-only (see README's "What this deliberately
+      # does not do" for the specific system-manager barrier neither module has been assessed
+      # against). `users.nix` is equally pure data but is NOT offered here -- its only current
+      # consumer (`lldap-reconcile.nix`) is itself NixOS-only, so there is no real cross-backend
+      # need for it yet; see `experiments/README.md` #016 for that left as an explicit, named
+      # choice rather than a silent gap.
       systemManagerModules.posix = ./modules/posix.nix;
       systemManagerModules.default = self.systemManagerModules.posix;
       darwinModules.posix = ./modules/posix.nix;
@@ -56,6 +67,8 @@
           inherit lib nixpkgs system;
           nixiamModules = self.nixosModules;
           posixModule = self.nixosModules.posix;
+          usersModule = self.nixosModules.users;
+          lldapReconcileModule = self.nixosModules."lldap-reconcile";
           systemManagerLib = system-manager.lib;
         });
 

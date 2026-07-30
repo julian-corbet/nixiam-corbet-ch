@@ -1,6 +1,6 @@
 # nixiam
 
-IAM infrastructure for a self-hosted deployment, packaged as three NixOS
+IAM infrastructure for a self-hosted deployment, packaged as five NixOS
 modules under one flake:
 
 1. **An identity-provider stack** — an LDAP directory
@@ -14,8 +14,20 @@ modules under one flake:
    nothing that ever starts. This is "identity" in a completely different
    sense — which number a host or container runs as, and what it is
    allowed to touch — not a human's login credential at all.
+3. **A declarative human identity registry** (`users.nix`) — one entry per
+   real person: that they exist, which lldap groups they belong to, and
+   (by name, into the registry above) which POSIX identity is theirs. Pure
+   data, the same discipline as `posix.nix`. See
+   ["The human identity registry"](#the-human-identity-registry-and-the-line-that-makes-it-safe)
+   below for exactly where this stops and lldap's own runtime state begins.
+4. **The mechanism that projects that registry into a running lldap**
+   (`lldap-reconcile.nix`) — a systemd timer that creates whatever `users.nix`
+   declares and lldap does not have yet, and reports — never silently
+   removes — anything lldap has that the registry does not declare. See the
+   same section below for why that asymmetry is the single most important
+   property of this module.
 
-Both are IAM: identity, access, and credentials for whatever is asking —
+All five are IAM: identity, access, and credentials for whatever is asking —
 a person authenticating through a browser, or a workload asking to open a
 file or start a pod as a given uid. That is this repo's whole thesis, and
 the reason it is named `nixiam` rather than `nixid`: see
@@ -23,9 +35,9 @@ the reason it is named `nixiam` rather than `nixid`: see
 repository history behind that name, and exactly which option paths moved
 as a result.
 
-**Status: alpha.** All three modules are extracted, wired into `flake.nix`,
-and checked in CI. Two independent `nix flake check` groups exist for two
-independent reasons — see [Verifying](#verifying) below.
+**Status: alpha.** All five modules are extracted, wired into `flake.nix`,
+and checked in CI. Several independent `nix flake check` groups exist —
+see [Verifying](#verifying) below.
 
 lldap and pocket-id are also running live in a real production deployment
 (a small single-node host, outside this repo), and the identity chain
@@ -91,14 +103,103 @@ this registry, never the other way around.
   below for the full reasoning behind that boundary, and
   `checks/default.nix`'s `posix-purity` group for where it is
   mechanically enforced, not merely argued.
+- **`users.nix`** — the human identity registry: `nixiam.users.<name> =
+  { posixIdentity; groups; displayName; email; enable; acknowledgeRemoval;
+  }`. Pure data, the identical discipline as `posix.nix` — no `pkgs`
+  argument, no `systemd.services`, nothing that ever runs. Declares that a
+  human exists, which lldap groups they belong to, and (by NAME into
+  `nixiam.posix.identities`, never a raw uid) which POSIX identity is
+  theirs. See ["The human identity registry"](#the-human-identity-registry-and-the-line-that-makes-it-safe)
+  below for exactly where this registry stops and lldap's own runtime
+  state begins.
+- **`lldap-reconcile.nix`** — the mechanism, and the only thing in this
+  repo allowed to read `nixiam.users` and act on it: a systemd timer that
+  creates whatever a declared, `enable = true` person is missing from a
+  running lldap directory (their account, any group they should belong to,
+  that membership), and REPORTS — never silently removes — anything lldap
+  has that the registry does not declare. The one, deliberately narrow,
+  opt-in exception is covered in the same section below.
 
 lldap and pocket-id are named after the real upstream project behind them,
 not an abstract role ("ldap-directory", "oidc-provider") — a generic
 interface with exactly one implementation behind it documents a boundary
 that doesn't exist. If a second directory or SSO backend is ever added
-here, it gets its own module. `posix.nix` has no upstream project behind
-it at all — it is this repo's own pure-data table, named for what it holds
-rather than what it wraps.
+here, it gets its own module. `posix.nix` and `users.nix` have no upstream
+project behind them at all — both are this repo's own pure-data tables,
+named for what they hold rather than what they wrap.
+
+## The human identity registry, and the line that makes it safe
+
+A human identity today has (at least) four independent places that each
+claim to know who they are: a POSIX uid/gid, an lldap directory entry, a
+network ACL group, and a local Unix account. None of the four asserts that
+it agrees with any of the others — exactly the duplication this repo
+already removed once for a disk
+([nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch)'s
+`disks`) and once for an app/container identity (`posix.identities` above).
+`users.nix` is the same fix applied to a HUMAN, with one line drawn
+deliberately, because the failure mode on the wrong side of it is worse
+than a drifted uid: lldap sits behind this fleet's SSO, so getting the
+CREDENTIAL half of this wrong does not just corrupt a file, it locks a
+real person out of everything at once, or leaks the one secret that
+unlocks every directory entry simultaneously.
+
+**CONFIGURATION** — declared in `nixiam.users.<name>`, safe to commit to a
+public repo:
+
+- that this name exists as a human identity at all
+- which lldap groups they belong to (additive membership only — see below)
+- which `nixiam.posix.identities.<name>` entry is their uid/gid, by NAME,
+  never a raw number restated here
+- a display name and a contact email
+
+**STATE** — never here, never movable here no matter how it's stored:
+
+- password hashes, TOTP secrets, sessions, last-login. lldap owns these
+  exclusively, permanently — not a policy choice, a structural property of
+  the Nix store being world-readable on every machine that has ever built
+  this configuration. `lldap-reconcile.nix`'s own generated script cannot
+  even accidentally cross this line: lldap's `CreateUserInput`/
+  `UpdateUserInput` GraphQL types have no password field of any kind (see
+  `lldap-reconcile.nix`'s own header for exactly where that was confirmed).
+- anything a human changes about their own account at runtime — a password
+  reset must never require a redeploy, the same reason `lldap.nix`'s own
+  `adminPasswordFile` is read once, at first start, and never re-applied.
+
+### The reconciler never deletes — the load-bearing decision
+
+`lldap-reconcile.nix` creates a declared user if absent, creates a declared
+group if absent, and creates a declared membership if absent. It does
+**not** remove a user or a membership lldap has that the registry does not
+declare — not once, not ever, by default — because lldap sitting behind
+SSO means a deletion locks a real person out of every service behind it
+simultaneously, with no automatic undo once the mutation lands. Undeclared
+drift is reported: a `WARN` line naming exactly what is undeclared, and a
+non-zero exit, every single reconcile tick until the drift is resolved one
+way or the other by a human.
+
+This mirrors a decision this same nix* family already made for the
+identical reason: [nixiac](https://github.com/julian-corbet/nixiac-corbet-ch)
+inverts Crossplane's own default management policy from
+"observe, create, update, delete" to "observe only, orphan on removal",
+specifically because a destructive default must be asked for in writing
+rather than inherited from a framework.
+
+The ONE way to get an actual deletion out of this reconciler is per-person
+and opt-in: set `nixiam.users.<name>.enable = false` and
+`nixiam.users.<name>.acknowledgeRemoval` to a written reason (a sentence,
+not a boolean — the identical `nixiac`-style reasoning: a boolean is
+invisible in a diff and in `git blame`; a sentence survives both). Leaving
+`acknowledgeRemoval` unset with `enable = false` reports that person as
+drift and leaves them alone forever, same as a name the registry has never
+heard of at all.
+
+Both properties — idempotency (running twice performs zero mutations the
+second time) and the deletion-refusal behavior in both directions — were
+proven by actually executing this repo's own generated script against a
+local mock of lldap's API, never a live lldap; see
+[`experiments/README.md` #012](experiments/README.md#012--lldap-reconcile-idempotency--deletion-refusal-executed-against-a-local-mock)
+and its write-up in `studies/README.md`.
 
 ## Why posix folded back in
 
@@ -349,6 +450,22 @@ instead of something to remember to check.
   # config.nixiam.posix.identities.myapp.uid           -> 3000, for a ZFS chown
   # config.nixiam.posix.podSecurity.myapp.pod.runAsUser -> 3000, for a k8s pod spec
   # ...derived from the exact same declaration, so the two can never drift apart.
+
+  # The human identity registry -- independent of everything above; declares real people and
+  # projects them into the lldap directory running above.
+  nixiam.users.jane = {
+    posixIdentity = null;              # SSO-only: no shell, no POSIX uid at all
+    groups = [ "admins" ];
+    displayName = "Jane Doe";
+    email = "jane@example.org";
+  };
+
+  # The mechanism that actually reads nixiam.users and converges lldap to it -- a systemd timer,
+  # independent of nixiam.lldap running on THIS host (it can point at a remote one via apiUrl).
+  nixiam.lldapReconcile = {
+    enable = true;
+    credentialFile = "/run/secrets/lldap-reconcile-admin"; # NEVER a Nix store path -- asserted
+  };
 }
 ```
 
@@ -356,7 +473,10 @@ A host that wants ONLY the POSIX uid/gid registry — no LDAP directory, no
 OIDC/SSO provider, nothing that runs — imports `nixiam.nixosModules.posix`
 alone; see [`examples/posix-registry/configuration.nix`](examples/posix-registry/configuration.nix)
 for the full worked version `checks/default.nix`'s `posix-purity` group
-runs against.
+runs against. `examples/users-registry/configuration.nix` is the
+equivalent worked example for `users.nix` + `posix.nix` together — a human
+WITH a POSIX identity, one WITHOUT, and one declared but disabled without
+being deleted from the file.
 
 ## Two backends proven, one offered as-is (for `posix.nix`)
 
@@ -451,21 +571,57 @@ two identities may share a uid, and no two identities may resolve to the
 same gid after UPG resolution — both invisible at declaration time and at
 runtime, so both are hard failures rather than warnings.
 
+`nixiam.users.*` (`modules/users.nix`):
+
+- `<name>.enable` (default `true`) — whether the reconciler may create this
+  person and converge their memberships; `false` reports them as drift
+  instead of removing them, unless paired with `acknowledgeRemoval`.
+- `<name>.posixIdentity` — name into `nixiam.posix.identities`, or `null`
+  (default) for a pure SSO-only human with no POSIX/local-account
+  correspondence. Asserted to resolve whenever set AND `nixiam.posix` is
+  actually imported; silent otherwise, so this module is adoptable before
+  `posix.nix` is wired up on a given host.
+- `<name>.groups` (default `[ ]`) — lldap group membership by display
+  name, additive only.
+- `<name>.displayName`, `<name>.email` — no defaults; see each option's own
+  description for why inventing one would be worse than requiring it.
+- `<name>.acknowledgeRemoval` — a written reason (no default), the ONE
+  opt-in path to an actual deletion, only effective when `enable = false`.
+  Asserted against being set together with `enable = true` (a
+  contradiction: create-and-keep vs. delete cannot both be the intent).
+
+`nixiam.lldapReconcile.*` (`modules/lldap-reconcile.nix`):
+
+- `enable`, `apiUrl` (default `http://127.0.0.1:17170`, matching
+  `nixiam.lldap`'s own defaults for co-located use), `adminUsername`
+  (default `"admin"`).
+- `credentialFile` — no default; asserted to never resolve inside the Nix
+  store. Re-read fresh every reconcile run to mint a short-lived bearer
+  token — there is no long-lived API key to cache instead.
+- `dependsOnUnits`, `onBootSec` (default `5min`), `interval` (default
+  `30min`).
+
 ## Repository layout
 
 ```
 nixiam/
-  flake.nix                            # nixosModules.{lldap,pocket-id,posix}; systemManagerModules/darwinModules.posix
+  flake.nix                            # nixosModules.{lldap,pocket-id,posix,users,lldap-reconcile}; systemManagerModules/darwinModules.posix
   modules/
     lldap.nix
     pocket-id.nix
     posix.nix
+    users.nix                          # the human identity registry -- pure data
+    lldap-reconcile.nix                # the mechanism: reads users.nix, converges a running lldap
   checks/
-    default.nix                        # modules-evaluate (lldap+pocket-id+posix); eval-tests (posix-purity, module, podSecurity, backend-parity, example)
+    default.nix                        # modules-evaluate (all five composed); eval-tests (posix-purity, module, podSecurity, backend-parity, example, users-registry, lldap-reconcile)
   examples/
     host/                              # lldap + pocket-id composed together
     posix-registry/                    # posix alone -- the registry-only fixture the purity/backend-parity checks run against
+    users-registry/                    # users + posix together -- the posixIdentity cross-reference worked example
   experiments/
+    mock-lldap.py                      # local stand-in for lldap's HTTP API -- never a live lldap
+    lldap-reconcile-harness.nix        # builds the real nixiam-lldap-reconcile script against it
+    run-lldap-reconcile-proof.sh       # idempotency + deletion-refusal, actually executed
   studies/
 ```
 
@@ -475,13 +631,26 @@ Evaluation only — this repo ships no daemon to build, and no VM test yet:
 
 ```
 nix flake check
-# builds two check groups:
-#   modules-evaluate: lldap, pocket-id, and posix composed into one NixOS
-#     system (examples/host — posix rides along disabled), every
-#     assertion evaluated, nothing started
+# builds several check groups:
+#   modules-evaluate: lldap, pocket-id, posix, users, and lldap-reconcile
+#     composed into one NixOS system (examples/host -- posix/users/
+#     lldap-reconcile all ride along disabled or empty), every assertion
+#     evaluated, nothing started
 #   eval-tests: modules/posix.nix's own five groups (posix-purity, module,
-#     podSecurity, backend-parity, example), against examples/posix-registry
+#     podSecurity, backend-parity, example) against examples/posix-registry,
+#     plus users-registry (modules/users.nix's posixIdentity assertion, in
+#     both directions, PLUS the silent-when-nixiam.posix-is-not-imported
+#     case) and lldap-reconcile (the credentialFile-outside-the-store
+#     assertion, in both directions)
 ```
+
+None of the above starts lldap-reconcile's own systemd unit or runs its
+script against anything -- that is a runtime property of a shell script
+talking to an HTTP API, not something Nix evaluation can demonstrate on its
+own. That proof exists, and was actually executed, against a local mock of
+lldap's API (never a live lldap) in `experiments/` -- see
+["The human identity registry"](#the-human-identity-registry-and-the-line-that-makes-it-safe)
+above, `experiments/README.md` #012, and its write-up in `studies/README.md`.
 
 That is a real check rather than a smoke test: it forces the full NixOS
 evaluation, so a type error, a failed assertion, or a required value nobody
@@ -493,7 +662,7 @@ To just list what the flake exposes:
 
 ```
 nix eval .#nixosModules --apply "m: builtins.attrNames m"
-# => [ "lldap" "pocket-id" "posix" ]
+# => [ "lldap" "lldap-reconcile" "pocket-id" "posix" "users" ]
 ```
 
 ## Related projects

@@ -6,13 +6,81 @@ instructively), and are worth recording properly — with the reasoning,
 not just the result.
 
 A study earns its place here once it changed a decision in the main
-project. Nothing has closed yet. `nix flake check`'s `modules-evaluate`
-check (see the main [README](../README.md)) proves both modules
-*evaluate* — it composes them into one system, forces every option's
-default and every `throw`-guarded required value, and fails by name if
-either breaks — but it starts no daemon, binds no port, and performs no
-OIDC round trip. Nothing stronger than that has been run *inside this
-repo's own test matrix*.
+project. `nix flake check`'s `modules-evaluate` check (see the main
+[README](../README.md)) proves every module *evaluates* — it composes
+them into one system, forces every option's default and every
+`throw`-guarded required value, and fails by name if either breaks — but
+it starts no daemon, binds no port, and performs no OIDC round trip.
+Nothing stronger than pure evaluation has been run *inside this repo's
+own test matrix*, with the one exception below.
+
+## `nixiam-lldap-reconcile` idempotency and deletion-refusal, actually executed (2026-07-30)
+
+Closes [experiment 012](../experiments/README.md#012--lldap-reconcile-idempotency--deletion-refusal-executed-against-a-local-mock).
+`modules/lldap-reconcile.nix`'s own header makes two claims about its generated script that pure
+`nix flake check` evaluation cannot prove: running it twice against unchanged state is a no-op
+(zero mutation calls the second time), and an lldap user/membership `nixiam.users` does not
+declare is reported but never removed, except through the one explicit,
+per-person `acknowledgeRemoval` opt-in.
+
+Both were proven by actually running the REAL, unmodified script this repo ships —
+`experiments/lldap-reconcile-harness.nix` builds it straight from `modules/lldap-reconcile.nix`,
+not a reimplementation — against `experiments/mock-lldap.py`, a small local stand-in for lldap's
+own two HTTP endpoints (`/auth/simple/login`, `/api/graphql`), implementing exactly the
+query/mutation shapes the script calls (learned from lldap's own upstream `schema.graphql` +
+`scripts/bootstrap.sh`; see `lldap-reconcile.nix`'s header for the precise citations). Never a
+live lldap: the mock runs on loopback, started and torn down entirely within
+`experiments/run-lldap-reconcile-proof.sh`'s own invocation.
+
+**Fixture:** alice (wholly absent from the mock), bob (already exists, missing his one declared
+group membership, and already belongs to a group his declaration never mentions), carol
+(`enable = false` + `acknowledgeRemoval` set, already exists — the one case that should be
+deleted), and mallory (seeded directly into the mock, never declared in `nixiam.users` at all —
+plain undeclared drift).
+
+**Run 1** (fresh state) performed exactly the six expected mutations — created group `admins`,
+created group `readers`, created user `alice`, added alice→admins, added bob→readers, deleted
+carol — logged a `WARN` naming mallory and a separate `WARN` about bob's undeclared
+`extra-legacy-group` membership, touched neither, and exited non-zero (drift present, reported
+loudly, exactly as `lldap-reconcile.nix`'s header specifies).
+
+**Run 2** (same mock, call log reset, state otherwise untouched) performed **zero** mutation
+calls — `jq 'length'` on the mock's own `/_calls` log came back `0` — and still exited non-zero,
+because mallory and bob's extra membership are still undeclared and are reported on *every* tick
+by design, not just once. Mallory was still present in the mock's state after both runs; carol
+was gone after run 1 and stayed gone. Full transcript (abbreviated, ordering as actually
+produced):
+
+```
+── RUN 1 ──
+nixiam-lldap-reconcile: created missing group 'admins'
+nixiam-lldap-reconcile: created missing group 'readers'
+nixiam-lldap-reconcile: created missing user 'alice'
+nixiam-lldap-reconcile: added 'alice' to group 'admins'
+nixiam-lldap-reconcile: added 'bob' to group 'readers'
+nixiam-lldap-reconcile: WARN: lldap user 'bob' is a member of group 'extra-legacy-group', which
+  nixiam.users."bob".groups does not declare -- left untouched
+nixiam-lldap-reconcile: deleted acknowledged-removal user 'carol' (nixiam.users."carol".enable =
+  false, acknowledgeRemoval set)
+nixiam-lldap-reconcile: WARN: lldap user 'mallory' is not declared in nixiam.users ... -- left
+  untouched
+nixiam-lldap-reconcile: reconcile finished WITH drift or errors reported above
+exit status: 1
+
+── RUN 2 (call log reset first) ──
+nixiam-lldap-reconcile: WARN: lldap user 'bob' is a member of group 'extra-legacy-group' ...
+nixiam-lldap-reconcile: WARN: lldap user 'mallory' is not declared ...
+nixiam-lldap-reconcile: reconcile finished WITH drift or errors reported above
+exit status: 1
+-- mutation calls this run: []
+```
+
+**What this does NOT close:** a mock is not lldap. `experiments/README.md` #013–#015 name the
+three specific things this run cannot speak to — whether a narrower built-in lldap group than
+full admin actually authorizes these four mutations, `deleteUser`'s real cascade effect on group
+membership, and concurrent-tick races against lldap's own database layer — each unverified
+against a real instance, same honesty this repo already holds `lldap.nix`/`pocket-id.nix` to for
+their own unverified claims (experiments 001–007).
 
 The README's "Status" section also notes both modules are running in a
 real, separate production deployment, and that "the identity chain behind

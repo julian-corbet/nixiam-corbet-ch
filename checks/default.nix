@@ -24,7 +24,19 @@
 #   effect in isolation against a bare system, and the backend-parity proof exercises
 #   system-manager, which lldap/pocket-id have never been assessed against (see README's "What
 #   this deliberately does not do").
-{ pkgs, lib, nixpkgs, system, nixiamModules, posixModule, systemManagerLib }:
+#
+#   Two more groups, `users-registry` and `lldap-reconcile`, prove modules/users.nix and
+#   modules/lldap-reconcile.nix the same way: every assertion in both directions, plus the one
+#   asymmetry that makes users.nix's own posixIdentity reference DIFFERENT from posix.nix's own
+#   uid-collision assertions above -- it must additionally stay SILENT when nixiam.posix is not
+#   imported into the composed system at all, proven by evaluating usersModule genuinely alone,
+#   never alongside posixModule, for that one fixture. Nothing here starts lldap-reconcile's own
+#   systemd unit or calls its script against anything -- that proof (idempotency; the
+#   deletion-refusal behavior) is necessarily a runtime property of a shell script talking to a
+#   real or mocked lldap, not something Nix evaluation alone can demonstrate; see
+#   experiments/README.md for where that was actually exercised, against a local mock, never a
+#   live lldap.
+{ pkgs, lib, nixpkgs, system, nixiamModules, posixModule, usersModule, lldapReconcileModule, systemManagerLib }:
 
 let
   # ══ modules-evaluate: every exported module, composed from examples/host ═══════════════════════
@@ -97,6 +109,69 @@ let
         a = { uid = 3000; };
         b = { uid = 3001; gid = 3000; };
       };
+    };
+  };
+
+  # ── fixtures shared by the users-registry / lldap-reconcile groups below ─────────────────────
+
+  validUsersWithPosix = {
+    nixiam.posix = {
+      enable = true;
+      domain = "example.com";
+      identities.example-app.uid = 3000;
+    };
+    nixiam.users.alice = {
+      posixIdentity = "example-app";
+      displayName = "Alice Example";
+      email = "alice@example.com";
+      groups = [ "admins" ];
+    };
+  };
+
+  danglingPosixIdentity = {
+    nixiam.posix = {
+      enable = true;
+      domain = "example.com";
+      identities.example-app.uid = 3000;
+    };
+    nixiam.users.alice = {
+      posixIdentity = "no-such-identity";
+      displayName = "Alice Example";
+      email = "alice@example.com";
+    };
+  };
+
+  # The identical unresolved reference as danglingPosixIdentity above, but composed WITHOUT
+  # posixModule at all (see the users-registry group below) -- this is the fixture that must
+  # build FINE, proving nixiam.users can be adopted before nixiam.posix is ever imported.
+  unresolvedPosixIdentityNoPosixModule = {
+    nixiam.users.alice = {
+      posixIdentity = "no-such-identity";
+      displayName = "Alice Example";
+      email = "alice@example.com";
+    };
+  };
+
+  contradictoryRemoval = {
+    nixiam.users.alice = {
+      enable = true;
+      acknowledgeRemoval = "test fixture -- should never build";
+      displayName = "Alice Example";
+      email = "alice@example.com";
+    };
+  };
+
+  lldapReconcileStorePath = {
+    nixiam.lldapReconcile = {
+      enable = true;
+      credentialFile = "/nix/store/00000000000000000000000000000000-example/secret";
+    };
+  };
+
+  lldapReconcileRuntimePath = {
+    nixiam.lldapReconcile = {
+      enable = true;
+      credentialFile = "/run/secrets/example-lldap-reconcile-admin";
     };
   };
 
@@ -257,7 +332,78 @@ let
       "the shipped example (examples/posix-registry) failed to evaluate -- it is meant to be internally consistent by construction")
   ];
 
-  results = purityResults ++ moduleResults ++ podSecurityResults ++ backendParityResults ++ exampleResults;
+  # ══ Group 6: users-registry -- modules/users.nix's own assertions, in both directions plus the
+  # silent-when-unimported case ═══════════════════════════════════════════════════════════════
+  #
+  exampleUsersRegistry = lib.nixosSystem {
+    inherit system;
+    modules = [ posixModule usersModule ../examples/users-registry/configuration.nix ];
+  };
+  #
+  # `nixosBuildFails` above always composes `[ posixModule bareStubs extraConfig ]` -- it does NOT
+  # include `usersModule`, so it cannot be reused here as-is: a fixture setting `nixiam.users.*`
+  # against a system that never imported `nixiam.nixosModules.users` fails for the WRONG reason
+  # (an undeclared option), not the one this group means to test. Two more small helpers, each
+  # composing the exact module list its own fixtures need.
+  nixosBuildFailsUsersWithPosix = extraConfig:
+    !(builtins.tryEval (builtins.seq (evalNixosModules [ posixModule usersModule bareStubs extraConfig ]).system.build.toplevel true)).success;
+
+  nixosBuildFailsUsersAlone = extraConfig:
+    !(builtins.tryEval (builtins.seq (evalNixosModules [ usersModule bareStubs extraConfig ]).system.build.toplevel true)).success;
+
+  usersRegistryResults = [
+    (check "users-registry/disabled-registry-builds-fine"
+      (!(nixosBuildFailsUsersAlone { }))
+      "a host that declares no nixiam.users at all must never fail the build")
+
+    (check "users-registry/valid-posixIdentity-reference-builds-fine"
+      (!(nixosBuildFailsUsersWithPosix validUsersWithPosix))
+      "a user whose posixIdentity names a real nixiam.posix.identities entry must build fine")
+
+    (check "users-registry/dangling-posixIdentity-fails-the-build"
+      (nixosBuildFailsUsersWithPosix danglingPosixIdentity)
+      "expected a user's posixIdentity naming an ABSENT nixiam.posix.identities entry (with nixiam.posix imported and populated) to fail the build, but it succeeded")
+
+    (check "users-registry/unresolved-posixIdentity-is-silent-when-posix-module-is-not-imported"
+      (!(nixosBuildFailsUsersAlone unresolvedPosixIdentityNoPosixModule))
+      "the IDENTICAL unresolved posixIdentity reference as the dangling-reference fixture above, but composed WITHOUT nixiam.posix imported at all, must build fine -- this is what makes nixiam.users adoptable before nixiam.posix is, and it failed")
+
+    (check "users-registry/contradictory-enable-and-acknowledgeRemoval-fails-the-build"
+      (nixosBuildFailsUsersAlone contradictoryRemoval)
+      "expected a user declaring BOTH enable = true and a set acknowledgeRemoval to fail the build (the two disagree about whether this person should exist), but it succeeded")
+
+    (check "users-registry/example-evaluates"
+      (builtins.tryEval (builtins.seq exampleUsersRegistry.config.system.build.toplevel true)).success
+      "the shipped example (examples/users-registry) failed to evaluate -- it is meant to be internally consistent by construction")
+  ];
+
+  # ══ Group 7: lldap-reconcile -- the one assertion this module carries (credentialFile must
+  # never resolve inside the Nix store), in both directions ══════════════════════════════════
+  nixosBuildFailsLldapReconcileAlone = extraConfig:
+    !(builtins.tryEval (builtins.seq (evalNixosModules [ lldapReconcileModule bareStubs extraConfig ]).system.build.toplevel true)).success;
+
+  lldapReconcileResults = [
+    (check "lldap-reconcile/disabled-builds-fine"
+      (!(nixosBuildFailsLldapReconcileAlone { }))
+      "a host that never enables nixiam.lldapReconcile must never fail the build")
+
+    (check "lldap-reconcile/credentialFile-inside-nix-store-fails-the-build"
+      (nixosBuildFailsLldapReconcileAlone lldapReconcileStorePath)
+      "expected nixiam.lldapReconcile.credentialFile pointing inside /nix/store to fail the build, but it succeeded -- this is the one assertion standing between an admin credential and a world-readable location")
+
+    (check "lldap-reconcile/credentialFile-outside-nix-store-builds-fine"
+      (!(nixosBuildFailsLldapReconcileAlone lldapReconcileRuntimePath))
+      "a credentialFile pointing at a plausible runtime secret path (outside /nix/store) must build fine")
+  ];
+
+  results =
+    purityResults
+    ++ moduleResults
+    ++ podSecurityResults
+    ++ backendParityResults
+    ++ exampleResults
+    ++ usersRegistryResults
+    ++ lldapReconcileResults;
 
   failed = builtins.filter (r: !r.ok) results;
   report = lib.concatMapStringsSep "\n" (r: "  - ${r.name}: ${r.detail}") failed;
