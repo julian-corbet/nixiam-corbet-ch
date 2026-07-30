@@ -1,53 +1,39 @@
-# nixid
+# nixiam
 
-Two independent things, packaged as three NixOS modules under one flake:
+IAM infrastructure for a self-hosted deployment, packaged as three NixOS
+modules under one flake:
 
-1. **An identity-provider stack** for a self-hosted deployment: an LDAP
-   directory ([lldap](https://github.com/lldap/lldap)) and the OIDC/SSO
-   provider ([pocket-id](https://github.com/pocket-id/pocket-id)) that sits
-   in front of it. This is "identity" in the everyday sense — a human's
-   login and the directory that remembers it.
-2. **A fleet-wide POSIX uid/gid registry** (`posix.nix`) — pure data, no
-   daemon, no process, nothing that ever starts. This is "identity" in a
-   completely different, POSIX sense — which number a host or container
-   runs as — with no relationship to (1) beyond sharing this repository
-   and the `nixid.*` option prefix.
+1. **An identity-provider stack** — an LDAP directory
+   ([lldap](https://github.com/lldap/lldap)) and the OIDC/SSO provider
+   ([pocket-id](https://github.com/pocket-id/pocket-id)) that sits in front
+   of it. This is "identity" in the everyday sense — a human's login and
+   the directory that remembers it.
+2. **A cross-host POSIX uid/gid registry** (`posix.nix`) — one uid/gid per
+   name, and the Kubernetes `securityContext` each identity implies,
+   generated from the same declaration. Pure data — no daemon, no process,
+   nothing that ever starts. This is "identity" in a completely different
+   sense — which number a host or container runs as, and what it is
+   allowed to touch — not a human's login credential at all.
 
-Those two meanings of "identity" colliding under one name is exactly why
-this README has a dedicated section, below, arguing why that is still the
-right shape rather than something that crept in by accident. Read
-["Two scopes, one repo"](#two-scopes-one-repo) if the cohabitation looks
-wrong at first glance — it was reasoned about deliberately, not assumed.
+Both are IAM: identity, access, and credentials for whatever is asking —
+a person authenticating through a browser, or a workload asking to open a
+file or start a pod as a given uid. That is this repo's whole thesis, and
+the reason it is named `nixiam` rather than `nixid`: see
+["Why posix folded back in"](#why-posix-folded-back-in) below for the
+repository history behind that name, and exactly which option paths moved
+as a result.
 
 **Status: alpha.** All three modules are extracted, wired into `flake.nix`,
 and checked in CI. Two independent `nix flake check` groups exist for two
-independent reasons:
+independent reasons — see [Verifying](#verifying) below.
 
-- `modules-evaluate` composes all three into one NixOS system from
-  [examples/host](examples/host), which exercises every assertion any
-  module makes and — because all three live under `nixid.*` — is the only
-  thing that can catch a collision between them. Proven in the failing
-  direction too: removing a required credential path or mistyping a value
-  fails the check by name.
-- `posix-purity` is a different kind of check: not "do the modules
-  evaluate" but "does `posix.nix` keep the promise its own header makes."
-  It composes `nixosModules.posix` **alone** (see
-  [examples/registry-only-host](examples/registry-only-host)) and fails if
-  that ever produces a new systemd unit, a new `environment.systemPackages`
-  entry, or if the module's own function ever grows a `pkgs` argument. See
-  `checks/default.nix`'s own header for exactly what it proves and how it
-  proves the proof itself isn't vacuous.
-
-Both lldap and pocket-id are also running live in a real production
-deployment (a small single-node host, outside this repo), and the identity
-chain behind that deployment's mail stack has been verified end to end.
-That remains the stronger evidence for those two modules — the
-`modules-evaluate` check establishes that they evaluate, not that a login
-succeeds. There is still no automated `nixosTest` starting lldap, binding
-a port, or performing an OIDC round trip. `posix.nix` has no equivalent
-live deployment yet; its own guarantee (never running anything at all) is
-instead the kind of thing an eval-level check can prove completely, which
-is what `posix-purity` does.
+lldap and pocket-id are also running live in a real production deployment
+(a small single-node host, outside this repo), and the identity chain
+behind that deployment's mail stack has been verified end to end. That
+remains the stronger evidence for those two modules — the `modules-evaluate`
+check establishes that they evaluate, not that a login succeeds. There is
+still no automated `nixosTest` starting lldap, binding a port, or
+performing an OIDC round trip.
 
 ## Scope
 
@@ -65,17 +51,12 @@ directory server or SSO provider and says so, pointing here instead.
 This repo, in turn, ships no mail transport, no webmail, and no
 mail-specific LDAP schema (which groups/attributes a mail server expects
 to find in the directory) — that's `nixmail`'s `stalwart.nix` `ldap.*`
-options, or whatever else you point at this directory. The identity-
-provider stack only ever runs the directory server and the identity
-provider in front of it.
-
-The POSIX registry (`posix.nix`) has a completely separate scope, argued
-in full in its own module header and in
-["Two scopes, one repo"](#two-scopes-one-repo) below: a fleet-wide table of
-"this name is uid N, gid M" and the Kubernetes `securityContext` it
-implies, consumed by a sibling dataset-shape repo
-([nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch)) and
-by Kubernetes tenancy manifests — never the other way around.
+options, or whatever else you point at this directory. Nor does it walk a
+dataset tree and call `chown` — `posix.nix` answers only "who" (a uid/gid
+and the securityContext it implies); a sibling repo,
+[nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch),
+answers "where, and what shape" and is the one thing allowed to consume
+this registry, never the other way around.
 
 ## What this is
 
@@ -96,107 +77,100 @@ by Kubernetes tenancy manifests — never the other way around.
   ownership of persisted data) — and nothing about how it talks to the
   directory. See "What this deliberately does not do" below; it is the
   single most important thing to understand about this module.
-- **`posix.nix`** — the fleet-wide POSIX identity registry: a table of
-  `identities.<name> = { uid; gid; variant; ... }` and, generated straight
-  from it, `podSecurity.<name>` — the Kubernetes `securityContext` each
-  identity implies. PURE DATA: no `systemd.services`, no
-  `environment.systemPackages`, not even a `pkgs` argument. Nothing this
-  module declares ever runs, writes a file, or touches `/etc/passwd` — see
-  the module's own header for the full reasoning and
-  `checks/default.nix`'s `posix-purity` group for where that promise is
-  mechanically enforced. This is the one module in this repo with no
-  connection to LDAP, OIDC, or human login at all.
+- **`posix.nix`** — the cross-host POSIX identity registry:
+  `nixiam.posix.identities.<name> = { uid; gid; variant; ... }` and,
+  generated straight from it, `nixiam.posix.podSecurity.<name>` — the
+  Kubernetes `securityContext` that identity implies, split into
+  `pod`/`container`/`env` the same way Kubernetes itself splits a
+  securityContext across those three places. Nothing else across hosts
+  should ever declare a raw uid/gid number a second time next to a
+  dataset path or a pod spec; it declares a NAME here instead. THIS
+  MODULE IS PURE DATA — no `systemd.services`, no
+  `environment.systemPackages`, no `pkgs` argument at all, not even a
+  `users.users`/`users.groups` entry. See "Why posix folded back in"
+  below for the full reasoning behind that boundary, and
+  `checks/default.nix`'s `posix-purity` group for where it is
+  mechanically enforced, not merely argued.
 
-Both `lldap.nix` and `pocket-id.nix` are named after the real upstream
-project behind them, not an abstract role ("ldap-directory",
-"oidc-provider") — a generic interface with exactly one implementation
-behind it documents a boundary that doesn't exist. If a second directory
-or SSO backend is ever added here, it gets its own module. `posix.nix` is
-named after what it IS (a POSIX identity registry) for the same reason,
-one level removed: there is no upstream project standing behind a fleet's
-own uid/gid convention to name it after.
+lldap and pocket-id are named after the real upstream project behind them,
+not an abstract role ("ldap-directory", "oidc-provider") — a generic
+interface with exactly one implementation behind it documents a boundary
+that doesn't exist. If a second directory or SSO backend is ever added
+here, it gets its own module. `posix.nix` has no upstream project behind
+it at all — it is this repo's own pure-data table, named for what it holds
+rather than what it wraps.
 
-## Two scopes, one repo
+## Why posix folded back in
 
-`posix.nix`'s own header spends its entire opening argument on why it must
-stay cheap to import — cheap enough for "a single-purpose,
-memory-hardened VPS running at ~1 GB of RAM with nothing to spare for a
-service it doesn't need." The same repository also ships two real,
-running services with real persisted state. Read literally, those two
-facts pull in opposite directions, and this section exists to say plainly
-why the arrangement is kept anyway, rather than just doing it.
+`posix.nix` was a cross-host table of "this name is uid N, gid M" and the
+Kubernetes `securityContext` it implies — pure data, no daemon, no
+process, nothing that ever ran. It shared this repo (then named `nixid`)
+with the two real, running services above, until a genuine split moved it
+out to its own repository, `nixposix`, on two grounds: a uid/gid table is
+portable to every backend an operator manages (NixOS, system-manager, AND
+nix-darwin — nixid's own `lldap`/`pocket-id` have no nix-darwin
+equivalent, so nixid never exported `darwinModules` at all), and the
+registry has no relationship to LDAP or OIDC whatsoever — a reader
+arriving at a repo named for an identity-provider stack to find a
+completely unrelated POSIX uid/gid table was a real discoverability cost.
 
-**The two options actually on the table:**
+That split is now reversed, and `posix.nix` is back — as `nixiam.posix.*`,
+under an ADDED `.posix` level it never had as a bare `nixposix.*`, and
+under a repo renamed from `nixid` to `nixiam` to say plainly what it
+actually is: **identity, access, and credentials for a host or
+container**, not merely "id". ACL, POSIX uid/gid, and cross-host gid
+convergence are all facets of the same question `lldap`/`pocket-id`
+already answer for a human — WHO this is and WHAT it may do — so they
+belong in the same repo, under the acronym the industry already uses for
+exactly this question, rather than in three repos split by upstream-project
+boundary instead of by what the question actually is. The discoverability
+cost the original split was reasoned against is smaller than the cost of
+scattering one coherent question — identity and access — across
+repositories that each only answer one slice of it.
 
-1. **Distinct flake outputs, one repo (what this repo does).** Three
-   separate `nixosModules` (`lldap`, `"pocket-id"`, `posix`), each backed
-   by its own file, none importing either of the others. A consumer that
-   writes `imports = [ inputs.nixid.nixosModules.posix ]` evaluates
-   exactly `modules/posix.nix` and nothing else in this repository — no
-   line of `lldap.nix` or `pocket-id.nix` is ever parsed, evaluated, or
-   built as a result. `checks/default.nix`'s `posix-purity` group proves
-   this mechanically rather than leaving it as an implication of "well,
-   Nix modules are just files."
-2. **A genuine split**: `posix.nix` moves to its own repository, with its
-   own flake, its own `nix flake check`, no connection to lldap/pocket-id
-   at all beyond a design-document ancestry. This repo's sibling
-   [nixhardware](https://github.com/julian-corbet/nixhardware-corbet-ch)
-   is the existing precedent for exactly this shape in this same family: a
-   dedicated repo holding nothing but a pure-data registry
-   (`modules/machines.nix`) and the derivations that read it, with no
-   service anywhere in it. If this repo were being designed from scratch
-   today, knowing that precedent, `posix.nix` would very plausibly start
-   life there instead.
+What did NOT change: `posix.nix` is exactly the file it was as `nixposix`
+(down to its own option descriptions), it still exports to
+`nixosModules`, `systemManagerModules`, **and** `darwinModules` from the
+same file (a uid/gid table has no reason not to), and it still ports to
+every backend `lldap.nix`/`pocket-id.nix` cannot (see "What this
+deliberately does not do" below for the specific system-manager barrier
+those two have never been assessed against). Only the repo it lives in,
+and the option prefix in front of it, moved.
 
-**Why (1), not (2), right now:**
+**If anything across hosts still imports `nixposix.nixosModules.posix` (or,
+further back, `nixid.nixosModules.posix`), it no longer exists.** Every
+option path changes as follows:
 
-The property `posix.nix`'s header actually needs — that importing it costs
-a host nothing — is a property of **Nix module granularity**, not of
-**git repository granularity**. A flake's `nixosModules.*` outputs are
-individually-evaluated files; nothing about sharing a `flake.nix` or a
-`.git` history with two unrelated services forces a third module to pay
-for either of them. The literal cost the header is protecting against —
-extra systemd units, extra packages, extra `pkgs` — is an eval/build-time
-cost, and that cost is already, verifiably, zero: see
-`checks/default.nix`'s `posix-purity` group, which composes
-`nixosModules.posix` alone and asserts the resulting system has exactly
-the same `systemd.services` and `environment.systemPackages` as one
-without it. A host fetching this flake as an input does pay for the bytes
-of `lldap.nix`/`pocket-id.nix` sitting in its git history, once, on disk —
-but that is a one-time source-text checkout, not the recurring
-RAM/build/generation cost the header is actually written to prevent.
+| Oldest (inside nixid, pre-split) | Middle (standalone nixposix) | Current (nixiam) |
+|---|---|---|
+| `config.nixid.posix.enable` | `config.nixposix.enable` | `config.nixiam.posix.enable` |
+| `config.nixid.posix.domain` | `config.nixposix.domain` | `config.nixiam.posix.domain` |
+| `config.nixid.posix.identities.<name>` | `config.nixposix.identities.<name>` | `config.nixiam.posix.identities.<name>` |
+| `config.nixid.posix.groups.<name>` | `config.nixposix.groups.<name>` | `config.nixiam.posix.groups.<name>` |
+| `config.nixid.posix.podSecurity.<name>` | `config.nixposix.podSecurity.<name>` | `config.nixiam.posix.podSecurity.<name>` |
 
-Weighed against that, a genuine split has a real, immediate cost that a
-mechanical-purity check cannot substitute for: this repo already has a
-**published, cross-repo contract** depending on today's shape.
-[nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch)'s own
-`flake.nix` takes `nixid` as a flake input pinned to
-`github:julian-corbet/nixid-corbet-ch` and imports
-`nixid.nixosModules.posix` by that exact path — its reconciler module
-resolves every `owner`/`group`/`identity` reference against
-`config.nixid.posix.identities`/`.groups`/`.podSecurity`, with assertions
-that name this exact option path in their own error messages. Moving
-`posix.nix` to a new repository today, in this pass, would break that
-contract immediately, with no coordinated update to `nixstorage` landing
-in the same change — an uncoordinated breaking change to a real
-dependent, not a cleanup. (This family is young enough that breaking an
-option surface is an accepted cost when it buys something — see this
-module's own header history — but breaking it *for no immediate reader
-benefit, and without the matching update landing alongside it*, is a
-different thing entirely: a dependent left broken, not a design improved.)
+Known real consumers at the time of this fold-back, checked by direct
+source read: `nixstorage`'s `modules/reconciler.nix`, `nixmail`'s
+`modules/stalwart.nix`, and `nixarch`'s `modules/device-gids.nix` all read
+`config.nixiam.posix.*` today and needed this path change (from whichever
+of the two older paths they were on). `nixluks` was also checked and does
+**not** actually read it — its own `modules/nixluks.nix` only cites the
+registry's defensive-read pattern as prior art in a comment, while reading
+`config.nixstorage.disks` itself; it needs no change.
 
-**The honest summary:** option (1) is not merely the cheap option chosen
-to avoid work — it is *sufficient*, because the guarantee that actually
-matters (zero eval/build cost to import the registry alone) is already
-true and now mechanically checked, and the thing option (2) would improve
-(discoverability — a reader finding `posix.nix` by way of a repo whose
-name and top-level description are about LDAP and OIDC) is real but
-smaller than the cost of breaking an already-published dependent with no
-coordinated fix in hand. If a future pass lands a coordinated update
-across this repo and `nixstorage` (and any other consumer of
-`nixid.nixosModules.posix`), following the `nixhardware` precedent for
-where the registry ends up is the right call at that point — this section
-should be revisited then, not treated as a permanent verdict.
+⚠ **THIS IS A HARD CUTOVER, AND IT FAILS SILENTLY.** All three real
+consumers read the option defensively (`config.nixiam.posix.… or { }`),
+which is exactly why the fix in each case is a one-line path change, never
+a new flake input — none of nixstorage, nixmail, or nixarch take `nixiam`
+(or, at either earlier point, `nixid`/`nixposix`) as a flake input at all.
+That same defensiveness also means a consumer still reading the OLD path
+does **not** get an evaluation error: identities and groups simply
+**vanish** — no assertion, no warning, and a reconciler that was chowning
+trees to declared uids quietly finds nothing to do. That is the same class
+of failure as a glob matching nothing: the safety mechanism absorbs the
+error. So the three consumer repos above must be repointed **in lockstep
+with, or before**, any host that adopts the renamed `nixiam` — never on a
+lazy migration schedule.
 
 ## What this deliberately does not do
 
@@ -222,30 +196,130 @@ attribute names a consumer expects to find), which genuinely is
 Nix-declarable and belongs in whichever module consumes the directory —
 a materially different kind of "not shipped here" than pocket-id's.
 
-Also out of scope, same reasoning as `nixmail`'s own equivalent section:
+Also out of scope:
 
-- **A real NixOS VM test** (`nixosTest`) exercising both service modules
-  against actual service startup, beyond pure evaluation. Not started.
-- **`systemManagerModules`** — not evaluated for this repo. `pocket-id.nix`
-  in particular touches `users.users`/credentials primitives that may or
-  may not map cleanly onto `system-manager`'s smaller surface. Unassessed,
-  not attempted. `posix.nix` has no such barrier — it is pure data with no
-  `pkgs` argument at all — but nobody has added a `systemManagerModules`
-  output for it either, since no consumer has asked for one yet.
+- **A real NixOS VM test** (`nixosTest`) exercising `lldap.nix`/
+  `pocket-id.nix` against actual service startup, beyond pure evaluation.
+  Not started.
+- **`systemManagerModules.lldap`/`."pocket-id"`** — not evaluated for
+  this repo. `pocket-id.nix` in particular touches `users.users`/
+  credentials primitives that may or may not map cleanly onto
+  `system-manager`'s smaller surface. Unassessed, not attempted. `posix.nix`
+  has no such barrier — pure data, no `pkgs` argument at all — which is
+  exactly why it, alone of the three, exports `systemManagerModules` and
+  `darwinModules`.
+- **`darwinModules.posix` proven against a real nix-darwin evaluation.**
+  The alias is offered on the strength of the same "bare `options`/
+  `config.assertions`" reasoning that makes `systemManagerModules.posix`
+  work, but no `nix-darwin` input exists in this repo's own CI to prove it
+  — see `experiments/README.md` #008.
+- **The `groups`/`reconcile` half of `posix.nix` exercised against a real
+  reconciler.** `checks/` proves the registry's shape (readable, typed,
+  collision-free); it does not prove that `nixstorage`'s reconciler
+  behaves correctly against it — see `experiments/README.md` #009.
+
+## The safety model: `posix.nix` never runs anything
+
+Stated once, here, because it is the invariant every check in this
+module's test group exists to uphold, and the property that makes it safe
+for even the smallest host to import:
+
+- **No `systemd.services`, no `environment.systemPackages`, no `pkgs`
+  argument at all.** Not even a `users.users`/`users.groups` entry —
+  nothing this module declares ever runs, writes a file, or touches
+  `/etc/passwd`. A ZFS chown target and a Kubernetes `runAsUser` both take
+  a bare number; neither needs a resolvable `/etc/passwd` line on THIS
+  host to mean anything.
+- **No secrets, credentials, or passwords of any kind.** This registry is
+  entirely public-shape numbers and booleans; if a future identity
+  genuinely needs a secret, that belongs in whatever module actually runs
+  that app — the same way this repo's own `lldap.nix` keeps its
+  `jwtSecretFile` on itself rather than on the registry.
+- **Never a mechanism, only a table.** If a future need genuinely wants
+  automation over this data (walking `identities` and calling `chown`,
+  say), that automation belongs in the module that already knows about
+  paths and datasets — never here. The moment this module grows a systemd
+  unit "just this once," every future host that imports it for the data
+  alone also inherits whatever that unit does, whether or not it has the
+  storage the unit assumes. Concretely: this registry answers "who"; a
+  sibling module elsewhere (`nixstorage`) answers "where, and what shape,"
+  and is the one thing allowed to consume this one, never the other way
+  around.
+
+This is no longer just an argument in prose. `checks/default.nix`'s
+`posix-purity` group fails `nix flake check` if `posix.nix`'s own function
+ever binds a `pkgs` argument, or if composing `nixosModules.posix` alone
+(see `examples/posix-registry`) ever changes `systemd.services` or
+`environment.systemPackages` relative to the identical system with the
+module absent entirely — with meta-tests proving the comparison itself
+has teeth, not merely that the real module happens not to violate it
+today.
+
+## The `domain` failure `posix.nix` exists to prevent
+
+`nixiam.posix.domain` is the identity domain every host shares for
+anything that maps NAMES across a trust boundary rather than trusting
+numbers directly. Its first, and so far only, real consumer is NFSv4
+idmapd's own `Domain=` setting.
+
+The failure this one shared value exists to prevent is not hypothetical,
+and it is genuinely nasty to diagnose, because BASIC ownership keeps
+working the entire time it is broken. NFSv4 maps uids/gids to and from
+`name@domain` strings on the wire; if a client's idmapd `Domain=` does not
+match the server's, idmapd silently falls back to guessing the domain
+from the client's own DNS search domain instead — and if that guess
+doesn't match either, every NFSv4 ACL-touching syscall starts paying a
+failed kernel upcall: `llistxattr` (reading the NFSv4 ACL attribute),
+`getfacl`, and the per-entry `stat`/`statx` a file manager or shell issues
+while just listing a directory. Measured cold, on a real host, against a
+single plain directory:
+
+```
+llistxattr   7.5 s
+statx        1.6 s
+```
+
+...for ONE directory. Ordinary AUTH_SYS ownership checks (owner/group/
+other bits, the numeric uid/gid a `stat()` returns) are completely
+unaffected, because AUTH_SYS passes uids and gids over the wire as plain
+NUMBERS — no name mapping, no idmapd involvement at all. That is exactly
+why this goes unnoticed for so long in practice: files still open, still
+read, still show the right owner; only the NFSv4-ACL-specific path is
+silently paying seconds per call, and nothing in the symptom points at
+"domain string mismatch" as the cause. One value, declared once here and
+referenced by every idmapd-touching module on every host that shares this
+registry's users, is what makes it structurally impossible for the two
+ends to drift apart by a typo.
+
+`nixiam.posix.groups` guards the same class of failure from the other
+protocol path: NFS's AUTH_SYS security flavor authenticates a request by
+sending the calling uid/gid as plain numbers, with no name lookup at all.
+If the SAME group name resolves to DIFFERENT gid numbers on two machines
+that share an NFS export, each machine's kernel still faithfully checks
+"does the caller's numeric gid match the file's numeric gid" — and gets a
+different answer depending on which machine asked, silently granting
+access on one and denying it on the other. This has been observed across a
+real, small multi-machine deployment: a group left to auto-allocate
+independently on each host ended up numbered differently on each one, and
+reconverging it required an explicit rename pass on every machine that had
+drifted, after the mismatch was already causing wrong access. Declaring
+the number once, here, is what makes that drift structurally impossible
+instead of something to remember to check.
 
 ## Quickstart
 
 ```nix
 {
-  inputs.nixid.url = "github:<owner>/<repo>"; # no public remote yet
+  inputs.nixiam.url = "github:<owner>/<repo>"; # no public remote yet
 
   # host configuration.nix:
   imports = [
-    inputs.nixid.nixosModules.lldap
-    inputs.nixid.nixosModules."pocket-id"
+    inputs.nixiam.nixosModules.lldap
+    inputs.nixiam.nixosModules."pocket-id"
+    inputs.nixiam.nixosModules.posix
   ];
 
-  nixid.lldap = {
+  nixiam.lldap = {
     enable = true;
     domain = "example.org";                       # placeholder — your real domain
     jwtSecretFile = "/run/secrets/lldap-jwt";
@@ -253,7 +327,7 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
     keySeedEnvFile = "/run/secrets/lldap-seed";
   };
 
-  nixid.pocketId = {
+  nixiam.pocketId = {
     enable = true;
     publicUrl = "https://id.example.org";
     encryptionKeyFile = "/run/secrets/pocket-id-encryption-key";
@@ -263,36 +337,49 @@ Also out of scope, same reasoning as `nixmail`'s own equivalent section:
   # point its LDAP sync at ldap://127.0.0.1:389 / the baseDn above, with a
   # bind DN and password of your choosing. Not a step this flake can do
   # for you — see "What this deliberately does not do".
-}
-```
 
-A host that wants **only** the POSIX registry — no LDAP directory, no
-OIDC/SSO provider, nothing that runs — imports a single, different module
-and nothing above it applies at all. See
-[examples/registry-only-host](examples/registry-only-host) for the full
-worked version this repo's own `posix-purity` check runs against:
-
-```nix
-{
-  inputs.nixid.url = "github:<owner>/<repo>";
-
-  imports = [ inputs.nixid.nixosModules.posix ];
-
-  nixid.posix = {
+  # The cross-host POSIX registry -- independent of the two services
+  # above; a host may declare this and neither of them, or vice versa.
+  nixiam.posix = {
     enable = true;
-    domain = "example.org";
-    identities.myapp.uid = 3000;   # gid defaults to a User Private Group
+    domain = "example.org";       # shared NFSv4-idmapd domain; see the module's own header
+    identities.myapp.uid = 3000;  # gid defaults to a User Private Group
   };
 
-  # config.nixid.posix.identities.myapp.uid          -> 3000, for a ZFS chown
-  # config.nixid.posix.podSecurity.myapp.pod.runAsUser -> 3000, for a k8s pod spec
+  # config.nixiam.posix.identities.myapp.uid           -> 3000, for a ZFS chown
+  # config.nixiam.posix.podSecurity.myapp.pod.runAsUser -> 3000, for a k8s pod spec
   # ...derived from the exact same declaration, so the two can never drift apart.
 }
 ```
 
+A host that wants ONLY the POSIX uid/gid registry — no LDAP directory, no
+OIDC/SSO provider, nothing that runs — imports `nixiam.nixosModules.posix`
+alone; see [`examples/posix-registry/configuration.nix`](examples/posix-registry/configuration.nix)
+for the full worked version `checks/default.nix`'s `posix-purity` group
+runs against.
+
+## Two backends proven, one offered as-is (for `posix.nix`)
+
+`nixosModules.posix`, `systemManagerModules.posix`, and
+`darwinModules.posix` all point at the exact same file, unchanged —
+possible because the module only ever touches `options`/`config.assertions`,
+primitives every module system built on `lib.evalModules` shares, and
+never `pkgs`, `systemd`, or any NixOS-only integration. `checks/default.nix`'s
+`backend-parity` group proves this for NixOS and system-manager: the same
+fixtures (a valid registry, a missing domain, a uid collision, a gid
+collision) evaluated through both `nixpkgs/nixos/lib/eval-config.nix` and
+system-manager's own `makeSystemConfig`, asserting each one fails — or
+builds — identically on both. The `darwinModules` alias is offered on the
+strength of the same reasoning but is **not yet backed by a check** — no
+`nix-darwin` input exists in this repo's own CI. See
+`experiments/README.md` #008.
+
+`lldap.nix`/`pocket-id.nix` have NO such parity claim — see "What this
+deliberately does not do" above.
+
 ## Options reference
 
-`nixid.lldap.*` (`modules/lldap.nix`):
+`nixiam.lldap.*` (`modules/lldap.nix`):
 
 - `enable`, `package` (a pinning caveat re: SQLite schema versioning lives
   on this option's own description).
@@ -313,7 +400,7 @@ worked version this repo's own `posix-purity` check runs against:
   real DynamicUser-vs-tmpfiles-ordering failure this exists to prevent.
 - `databaseUrl`, `stateDir`, `stateDirIsBindMount`, `dependsOnUnits`.
 
-`nixid.pocketId.*` (`modules/pocket-id.nix`):
+`nixiam.pocketId.*` (`modules/pocket-id.nix`):
 
 - `enable`, `package`.
 - `publicUrl` — no default (see the option description for why a silently
@@ -333,15 +420,14 @@ worked version this repo's own `posix-purity` check runs against:
   for why this is a different failure than `lldap.nix`'s own `uid` note,
   even though the fix (pin a number) looks the same.
 
-`nixid.posix.*` (`modules/posix.nix`) — see
-["Two scopes, one repo"](#two-scopes-one-repo) for why this option group
-has no relationship to the two above:
+`nixiam.posix.*` (`modules/posix.nix`):
 
 - `enable`.
 - `domain` — the identity domain shared by every NFSv4-idmapd-touching
-  host in the fleet. Required (non-empty) whenever `enable` is true; see
-  the module header for the specific, measured `llistxattr`/`statx`
-  slowdown a mismatched value silently causes.
+  host in this registry. Required (non-empty) whenever `enable` is true; see
+  ["The `domain` failure"](#the-domain-failure-posixnix-exists-to-prevent)
+  above for the specific, measured `llistxattr`/`statx` slowdown a
+  mismatched value silently causes.
 - `identities.<name>` — the registry itself: `uid` (required, no
   default), `gid` (default `null` — a User Private Group equal to `uid`),
   `variant` (`"native"` or `"puid"`, for images that drop privilege
@@ -360,25 +446,25 @@ has no relationship to the two above:
   no separate place to declare a pod's `runAsUser` by hand, and that
   absence is the whole point.
 
-Two collision assertions fire whenever `enable` is true: no two
-identities may share a uid, and no two identities may resolve to the same
-gid after UPG resolution — both invisible at declaration time and at
+Two collision assertions fire whenever `nixiam.posix.enable` is true: no
+two identities may share a uid, and no two identities may resolve to the
+same gid after UPG resolution — both invisible at declaration time and at
 runtime, so both are hard failures rather than warnings.
 
 ## Repository layout
 
 ```
-nixid/
-  flake.nix                      # nixosModules.{lldap,pocket-id,posix}
+nixiam/
+  flake.nix                            # nixosModules.{lldap,pocket-id,posix}; systemManagerModules/darwinModules.posix
   modules/
     lldap.nix
     pocket-id.nix
     posix.nix
   checks/
-    default.nix                  # modules-evaluate + posix-purity
+    default.nix                        # modules-evaluate (lldap+pocket-id+posix); eval-tests (posix-purity, module, podSecurity, backend-parity, example)
   examples/
-    host/                        # all three composed together
-    registry-only-host/          # posix.nix alone, nothing else
+    host/                              # lldap + pocket-id composed together
+    posix-registry/                    # posix alone -- the registry-only fixture the purity/backend-parity checks run against
   experiments/
   studies/
 ```
@@ -389,22 +475,19 @@ Evaluation only — this repo ships no daemon to build, and no VM test yet:
 
 ```
 nix flake check
-# builds two independent check groups:
-#   modules-evaluate: all three modules composed into one NixOS system,
-#     every assertion evaluated, nothing started
-#   posix-purity: nixosModules.posix composed ALONE (examples/registry-only-host)
-#     produces the identical systemd.services/environment.systemPackages as the
-#     same system without it, and the module's own function never binds `pkgs`
+# builds two check groups:
+#   modules-evaluate: lldap, pocket-id, and posix composed into one NixOS
+#     system (examples/host — posix rides along disabled), every
+#     assertion evaluated, nothing started
+#   eval-tests: modules/posix.nix's own five groups (posix-purity, module,
+#     podSecurity, backend-parity, example), against examples/posix-registry
 ```
 
 That is a real check rather than a smoke test: it forces the full NixOS
 evaluation, so a type error, a failed assertion, or a required value nobody
 supplied fails it. What it cannot tell you is whether lldap actually serves LDAP
 or whether an OIDC login completes — for that, see the live deployment noted
-under Status. `posix.nix`'s own guarantee (never running anything, ever) is
-different in kind: it is exactly the sort of claim an eval-level check CAN
-prove completely, which is what `posix-purity` does, including proving its
-own comparisons aren't vacuously true (`checks/default.nix`'s meta-tests).
+under Status.
 
 To just list what the flake exposes:
 
@@ -415,7 +498,7 @@ nix eval .#nixosModules --apply "m: builtins.attrNames m"
 
 ## Related projects
 
-`nixid`'s identity-provider stack pairs most directly with
+Pairs most directly with
 [nixmail](https://github.com/julian-corbet/nixmail-corbet-ch) (a mail
 server's LDAP directory *client* config lives there, pointed at the
 directory this repo runs) and follows the same design conventions as
@@ -423,15 +506,17 @@ directory this repo runs) and follows the same design conventions as
 naming, secrets-as-`*File`-options, no hardcoded domain/hostname/IP
 anywhere in this repo).
 
-`nixid`'s POSIX registry has a completely different pairing:
-[nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch)
-resolves every dataset owner and app-leaf identity against
-`nixid.posix.identities`/`.groups` (never the other way around — see
-["Two scopes, one repo"](#two-scopes-one-repo) for that contract), and
-[nixhardware](https://github.com/julian-corbet/nixhardware-corbet-ch)'s
-`modules/machines.nix` is the sibling precedent for what a *dedicated*
-pure-data registry repo in this family looks like — read there first if
-`posix.nix`'s "no systemd, no pkgs, ever" header reads as unfamiliar.
+[nixstorage](https://github.com/julian-corbet/nixstorage-corbet-ch),
+[nixmail](https://github.com/julian-corbet/nixmail-corbet-ch), and
+[nixarch](https://github.com/julian-corbet/nixarch-corbet-ch) all read
+`nixiam.posix.*` (see ["Why posix folded back in"](#why-posix-folded-back-in)
+above for the exact paths) — never the reverse; this repo must never learn
+a dataset path, a mail user, or a device name.
+[nixmachines](https://github.com/julian-corbet/nixmachines-corbet-ch) is
+the sibling pure-data registry `posix.nix`'s own `flake.nix` shape (the
+same file exported as `nixosModules`/`systemManagerModules`/`darwinModules`)
+and testing discipline (`posix-purity`-style mechanical enforcement,
+backend-parity checks) were both copied from.
 
 ## License
 

@@ -52,6 +52,20 @@ result:
 - **`uid`/`gid` auto-allocation reproducibility across a reimage**
   (experiment 007) — reimage the same configuration twice and diff the
   allocated uid/gid numbers for both services.
+- **`darwinModules.posix` proven against a real nix-darwin eval**
+  (experiment 008) — once a `nix-darwin` input and a composed
+  `darwinConfiguration` exist in `checks/`, the finding (parity confirmed,
+  or a genuine incompatibility found and fixed) belongs here.
+- **nixstorage's reconciler re-verified against `nixiam.posix`**
+  (experiment 009) — whether its existing checks passed unchanged or
+  needed a fix, across each home this registry has had (inside nixid,
+  standalone as nixposix, and folded back into nixiam).
+- **Eval-time at real scale** (experiment 010) — actual timing
+  against a synthetic few-hundred-identity fixture, not an assumption
+  that attribute-set folds "should" scale fine.
+- **A third `variant` shape, if one is ever found** (experiment 011) —
+  the concrete container image that needed it, and why neither `"native"`
+  nor `"puid"` fit.
 
 None of these have been run. Until one is, this directory stays empty of
 findings by design — see `../experiments/README.md` for the reasoning

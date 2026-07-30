@@ -38,19 +38,20 @@
 # credential, a pinned uid/gid) governs how the pocket-id PROCESS starts up
 # -- not what it does once it is running.
 #
-# This repo also ships modules/posix.nix, a fleet-wide POSIX uid/gid registry that answers a
-# completely different question (a host/container uid/gid, not a human's login credential) and
-# has no relationship to this module at all beyond sharing a repo and the `nixid.*` prefix --
-# importing `nixosModules."pocket-id"` never pulls it in, and vice versa. See README's "Two
-# scopes, one repo" section if that cohabitation is surprising.
+# A cross-host POSIX uid/gid registry -- a completely different question (a host/container
+# uid/gid, not a human's login credential) -- also lives in this repo, as modules/posix.nix
+# under the `nixiam.posix.*` prefix. It has no relationship to this module beyond sharing a
+# repo and the `nixiam.*` prefix; see README's "Why posix folded back in" section for why that
+# is the right shape for this repo specifically, and modules/posix.nix's own header for the
+# registry itself.
 
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.nixid.pocketId;
+  cfg = config.nixiam.pocketId;
 in
 {
-  options.nixid.pocketId = {
+  options.nixiam.pocketId = {
     enable = lib.mkEnableOption "pocket-id OIDC/SSO identity provider";
 
     package = lib.mkPackageOption pkgs "pocket-id" {
@@ -240,14 +241,14 @@ in
     # description for the full failure this self-heals. Runs before every
     # start; a no-op once the one-time move has already happened.
     systemd.services.pocket-id.serviceConfig.ExecStartPre = [
-      "${pkgs.writeShellScript "nixid-pocket-id-relocate-legacy-db" ''
+      "${pkgs.writeShellScript "nixiam-pocket-id-relocate-legacy-db" ''
         set -eu
         legacy="${cfg.dataDir}/pocket-id.db"
         v2="${cfg.dataDir}/data/pocket-id.db"
         if [ -f "$legacy" ] && [ ! -f "$v2" ]; then
           mkdir -p "${cfg.dataDir}/data"
           mv "$legacy" "$v2"
-          echo "nixid pocket-id: relocated legacy v1 database $legacy -> $v2"
+          echo "nixiam pocket-id: relocated legacy v1 database $legacy -> $v2"
         fi
       ''}"
     ];

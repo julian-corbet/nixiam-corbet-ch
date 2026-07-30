@@ -74,18 +74,19 @@
 # `pkgs.lldap` by default; see that option for the one real caveat that
 # survives the simplification.
 #
-# This repo also ships modules/posix.nix, a fleet-wide POSIX uid/gid registry that answers a
-# completely different question (a host/container uid/gid, not a human's login credential) and
-# has no relationship to this module at all beyond sharing a repo and the `nixid.*` prefix --
-# importing `nixosModules.lldap` never pulls it in, and vice versa. See README's "Two scopes,
-# one repo" section if that cohabitation is surprising.
+# A cross-host POSIX uid/gid registry -- a completely different question (a host/container
+# uid/gid, not a human's login credential) -- also lives in this repo, as modules/posix.nix
+# under the `nixiam.posix.*` prefix. It has no relationship to this module beyond sharing a
+# repo and the `nixiam.*` prefix; see README's "Why posix folded back in" section for why that
+# is the right shape for this repo specifically, and modules/posix.nix's own header for the
+# registry itself.
 
 { config, lib, pkgs, ... }:
 
 with lib;
 
 let
-  cfg = config.nixid.lldap;
+  cfg = config.nixiam.lldap;
 
   # Shared by `baseDn`'s default and (indirectly, via `domain`) `adminEmail`'s.
   # Not shared code with any other module in this repo -- there is no shared
@@ -114,11 +115,11 @@ let
   # check -- never promote it to a hard failure, since a legitimately slow-
   # starting overlay network at boot would look identical to a genuinely
   # wrong name.
-  interfaceCheckScript = pkgs.writeShellScript "nixid-lldap-interface-check" ''
+  interfaceCheckScript = pkgs.writeShellScript "nixiam-lldap-interface-check" ''
     set -euo pipefail
     ${concatMapStringsSep "\n" (ifn: ''
       if ! ${pkgs.iproute2}/bin/ip link show ${escapeShellArg ifn} >/dev/null 2>&1; then
-        echo "nixid lldap: exposeOnInterfaces names '${ifn}', but no such interface exists on this host (checked at boot)." >&2
+        echo "nixiam lldap: exposeOnInterfaces names '${ifn}', but no such interface exists on this host (checked at boot)." >&2
         echo "  The firewall rule for it is harmless but INERT right now -- port ${toString cfg.ldapPort} is not actually reachable via '${ifn}'." >&2
         echo "  If this interface is brought up later by something else (a VPN client that starts after this check), this warning is stale; if it never appears, the name is wrong." >&2
       fi
@@ -126,7 +127,7 @@ let
   '';
 in
 {
-  options.nixid.lldap = {
+  options.nixiam.lldap = {
     enable = mkEnableOption ''
       the LDAP identity directory (implemented by lldap) backing this
       repo's identity infrastructure
@@ -168,8 +169,8 @@ in
       default =
         if cfg.domain == null then
           throw ''
-            nixid.lldap.baseDn has no default because
-            nixid.lldap.domain is not set. Either set `domain`
+            nixiam.lldap.baseDn has no default because
+            nixiam.lldap.domain is not set. Either set `domain`
             (e.g. "example.com") so a base DN can be derived from it, or
             set `baseDn` explicitly (e.g. "dc=example,dc=com").
           ''
@@ -184,7 +185,7 @@ in
         directory client, an OIDC/SSO provider's LDAP sync) needs to agree
         on this exact value; if you run more than one such consumer, set
         this once and have the others reference
-        `config.nixid.lldap.baseDn` rather than repeating the
+        `config.nixiam.lldap.baseDn` rather than repeating the
         literal string, so the two can never silently drift apart. Note
         that pocket-id.nix in this same repo is NOT such a consumer at
         eval time -- its own LDAP-sync base DN is entered by hand into
@@ -210,8 +211,8 @@ in
       default =
         if cfg.domain == null then
           throw ''
-            nixid.lldap.adminEmail has no default because
-            nixid.lldap.domain is not set. Either set `domain`
+            nixiam.lldap.adminEmail has no default because
+            nixiam.lldap.domain is not set. Either set `domain`
             (e.g. "example.com"), or set `adminEmail` explicitly.
           ''
         else "admin@${cfg.domain}";
@@ -520,8 +521,8 @@ in
     # -- see that option's description. Deliberately never fails the boot;
     # a wrong name here means a firewall rule is silently inert, not that
     # the service itself is broken.
-    systemd.services.nixid-lldap-interface-check = mkIf (cfg.exposeOnInterfaces != [ ]) {
-      description = "Check that nixid.lldap.exposeOnInterfaces names live interfaces";
+    systemd.services.nixiam-lldap-interface-check = mkIf (cfg.exposeOnInterfaces != [ ]) {
+      description = "Check that nixiam.lldap.exposeOnInterfaces names live interfaces";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];

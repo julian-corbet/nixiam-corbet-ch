@@ -1,11 +1,17 @@
-# The smallest NixOS configuration that composes both nixid modules, used by the
+# The smallest NixOS configuration that composes nixiam's lldap + pocket-id modules, used by the
 # `modules-evaluate` check.
 #
 # This is not a machine anyone would run. Every domain is under example.com,
 # every secret is a path that does not exist, and the root filesystem is tmpfs.
 # It exists so the directory and the SSO provider in front of it can be
-# type-checked together — they share the `nixid.*` namespace, and a
+# type-checked together — they share the `nixiam.*` namespace, and a
 # collision between the two is exactly what a per-module check cannot see.
+#
+# Deliberately does NOT enable `nixiam.posix` — that registry is exercised alone, against its own
+# fixture, in ../posix-registry/configuration.nix. `modules-evaluate` still composes
+# `nixosModules.posix` alongside these two (see checks/default.nix — it iterates every module this
+# flake exports), so this file's silence on `nixiam.posix` is itself the proof that a disabled
+# registry costs the identity-provider stack nothing.
 { ... }:
 {
   # The LDAP directory. Everything that authenticates users is a consumer of
@@ -16,7 +22,7 @@
   # them can be a value this module invents. Losing the key seed in particular
   # is not recoverable by resetting anything — it derives the encryption of
   # stored secrets.
-  nixid.lldap = {
+  nixiam.lldap = {
     enable = true;
     domain = "example.com";
     baseDn = "dc=example,dc=com";
@@ -26,7 +32,7 @@
   };
 
   # The OIDC/SSO provider in front of the directory.
-  nixid.pocketId = {
+  nixiam.pocketId = {
     enable = true;
 
     # Load-bearing: OIDC redirect URIs and issuer discovery are built from it,
@@ -37,26 +43,6 @@
     # Protects the stored secret rows — including the LDAP bind password — and
     # is read by pocket-id itself rather than by any option here.
     encryptionKeyFile = "/run/secrets/example-pocketid-encryption-key";
-  };
-
-  # The POSIX identity registry. Pure data -- see modules/posix.nix's own
-  # header -- composed here purely to exercise it under `modules-evaluate`
-  # alongside the two service modules above, since all three share the
-  # `nixid.*` namespace. One `"native"` identity and one `"puid"` identity,
-  # so the check's evaluation actually walks both branches of the
-  # generated `podSecurity` below rather than just one.
-  nixid.posix = {
-    enable = true;
-    domain = "example.com";
-    identities = {
-      example-app = {
-        uid = 3000;
-      };
-      example-linuxserver-app = {
-        uid = 3001;
-        variant = "puid";
-      };
-    };
   };
 
   # ── Stubs NixOS demands of any bootable system ───────────────────────────

@@ -6,7 +6,7 @@ survive the next cleanup pass. If something in here turns out to matter,
 distill the actual finding into [`../studies/`](../studies/README.md) and
 let the experiment stay disposable (or delete it).
 
-This is also the open-questions ledger for nixid's own judgment calls —
+This is also the open-questions ledger for nixiam's own judgment calls —
 every entry below corresponds to a default, an omission, or a design
 asymmetry that's reasoned in a module's own comments but not measured or
 exercised by any test. `nix flake check` (see the main
@@ -41,7 +41,7 @@ certainly do set some restart policy (most nixpkgs service modules do),
 so the "restarts in a loop" framing is probably accurate — but neither
 module in this repo pins it, so a future nixpkgs change to either
 upstream module's `Restart=`/`StartLimitIntervalSec=`/`StartLimitBurst=`
-silently changes nixid's own documented recovery behavior with nothing
+silently changes nixiam's own documented recovery behavior with nothing
 here to catch it.
 
 **Method sketch:** `nix eval` the composed `examples/host` system's
@@ -89,7 +89,7 @@ when they disagree.
 
 ## 003 — is the `exposeOnInterfaces` boot-time check ever actually exercised?
 
-**Question:** `lldap.nix`'s `nixid-lldap-interface-check` oneshot exists
+**Question:** `lldap.nix`'s `nixiam-lldap-interface-check` oneshot exists
 specifically to catch the exact incident described in `exposeOnInterfaces`'s
 own description — a VPN/mesh interface renamed during a migration, with
 the firewall rule left silently referencing a name that no longer exists.
@@ -108,7 +108,7 @@ confidence.
 host) that brings up a dummy interface, lists it in
 `exposeOnInterfaces`, confirms silence; then removes the interface (or
 never brings it up) and confirms the specific warning text appears in
-`journalctl -u nixid-lldap-interface-check`.
+`journalctl -u nixiam-lldap-interface-check`.
 
 **Status:** open. (This is also the concrete instance of the README's own
 "no automated `nixosTest`... beyond pure evaluation" gap, applied to one
@@ -116,7 +116,7 @@ specific piece of runtime behavior this module claims to provide.)
 
 ## 004 — pocket-id's v1→v2 legacy-database relocation script is untested automation around a production incident
 
-**Question:** `pocket-id.nix`'s `ExecStartPre` (`nixid-pocket-id-relocate-legacy-db`)
+**Question:** `pocket-id.nix`'s `ExecStartPre` (`nixiam-pocket-id-relocate-legacy-db`)
 moves `${dataDir}/pocket-id.db` to `${dataDir}/data/pocket-id.db` exactly
 once, guarded by `[ -f "$legacy" ] && [ ! -f "$v2" ]`. The module's own
 `package` option description calls the failure it's guarding against a
@@ -234,3 +234,115 @@ services, and diff the two runs' allocated uid/gid numbers for `lldap`
 and `pocket-id`.
 
 **Status:** open.
+
+## 008 — is `darwinModules.posix` actually usable, or just a plausible-looking alias?
+
+**Question:** `flake.nix` exposes `darwinModules.posix` pointing at the
+same `modules/posix.nix` file used for `nixosModules`/`systemManagerModules`,
+on the reasoning that the module only uses bare `options`/`config.assertions`
+primitives common to every module system built on `lib.evalModules`. This
+repo pulls in no `nix-darwin` input and has no check that actually composes
+the module into a `darwinConfiguration` the way `checks/default.nix` does
+for the other two backends — the alias is a reasoned guess, not a proven
+one, the exact gap [nixmachines' own experiment
+001](https://github.com/julian-corbet/nixmachines-corbet-ch) flags for the
+same shape of claim.
+
+**Hypothesis:** nix-darwin's module system is close enough to NixOS's own
+(both are `lib.evalModules` underneath) that a module this simple — no
+`pkgs`, no `systemd`, no platform-specific option namespace referenced —
+composes without incident. This is the first real consumer of this claim
+that matters in practice: the Mac here is the one machine
+nixiam's original lldap/pocket-id design never had to answer for, since
+those two modules ship no `darwinModules` output at all (see README's
+"What this deliberately does not do").
+
+**Method sketch:** add `nix-darwin` as a `checks`-only input (the same
+"used by checks only" posture `system-manager` already has in this flake),
+build a minimal `darwinConfiguration` composing `darwinModules.posix` with
+a small fixture, and add it to the backend-parity checks alongside the
+existing NixOS/system-manager pair.
+
+**Status:** open.
+
+## 009 — the `groups`/`reconcile` half of the registry has no real consumer inside this repo's own tests yet
+
+**Question:** `groups` and `identities.<name>.reconcile` both exist because
+a sibling module elsewhere (nixstorage's reconciler) is meant to read them
+and act on them — but that consumer lives in a different repo, and this
+repo's own `checks/` only proves the registry's *shape* (the values are
+readable, correctly typed, and collision-free), never that a real
+reconciler actually behaves correctly against them. The same gap existed
+back when this module lived in the standalone nixposix repo, unclosed then
+and still unclosed now that it has folded back into nixiam.
+
+**Hypothesis:** the shape is stable enough (nixstorage's own
+`modules/reconciler.nix` already reads `config.nixiam.posix.groups`/
+`.identities`/`.podSecurity` defensively today — see this repo's own
+README) that the actual reconciliation logic is unaffected by which repo
+the registry lives in. Unverified until nixstorage's own checks are
+re-run against a fixture pointed at this repo.
+
+**Method sketch:** re-run nixstorage's own `checks/` against a fixture
+that imports `nixiam.nixosModules.posix` and confirm nothing in its
+reconciler-level behavior changed from when it imported the standalone
+nixposix repo, or from when posix.nix lived inside nixid before that.
+
+**Status:** open.
+
+## 010 — `identities`/`groups` untested at anything near real scale
+
+**Question:** every fixture in `checks/default.nix` declares two or three
+identities. The uid/gid-collision detection (`duplicatesOf`) is an
+`attrNames`/`foldl'` pass over `cfg.identities`, which is the ordinary Nix
+idiom for this shape of data — but nothing here measures `nix flake
+check`'s eval time against a fixture anywhere near the dozens-to-low-
+hundreds of identities a real multi-host, multi-app deployment accumulates over
+time.
+
+**Hypothesis:** attribute-set folds over a few hundred entries are not a
+real eval-time concern for nixpkgs-scale evaluations in general, but that
+is an assumption carried over unchanged across every home this module has
+had, not a benchmark taken against this module specifically.
+
+**Method sketch:** generate a synthetic fixture with a few hundred
+`identities` entries (`builtins.genList`-built, never committed as a real
+inventory — this repo ships schema, not data, same rule nixmachines'
+README states for its own registry) and time `nix eval` against the
+`podSecurity` default and the collision assertions on it.
+
+**Status:** open.
+
+## 011 — only two `variant` shapes exist; is a third runtime shape waiting to be found?
+
+**Question:** `mkPodSecurityFor` branches on exactly two values —
+`"native"` and `"puid"` — covering "runs as its target uid from the first
+instruction" and "starts root, drops privilege via PUID/PGID" respectively.
+Both were reasoned from container images actually encountered. Whether a
+third shape exists in practice (an image that needs supplementary GROUPS
+plural rather than one `fsGroup`, say, or one that drops privilege via a
+mechanism that is neither of these two) has not been surveyed against a
+real, growing app inventory since this module's original design.
+
+**Hypothesis:** two variants have covered every real identity declared so
+far, but "every one encountered so far" is exactly the kind of confidence
+this family's own testing discipline treats as provisional, not proof
+there is no third shape waiting in the next app onboarded.
+
+**Method sketch:** when an app's container image resists both `"native"`
+and `"puid"` handling, work out the actual shape it needs, decide whether
+it is a genuinely new `variant` value or better modeled as an option on
+the existing two, and land it with a fixture and an assertion covering the
+distinction — not silently reused as a near-fit for one of the existing two.
+
+**Status:** open.
+
+## Renumbering history
+
+001–007 above are original to this file, from nixid's own
+`experiments/README.md`. 008–011 were originally numbered 001–004 in the
+standalone nixposix repo's own `experiments/README.md`; they are
+renumbered here, unchanged in content beyond namespace (`nixposix.*` →
+`nixiam.posix.*`) and repo references, when that repo folded back into
+this one as `nixiam.posix` (see the main [README](../README.md)'s "Why
+posix folded back in" for the argument).
