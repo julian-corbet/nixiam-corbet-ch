@@ -3,27 +3,23 @@
 # EVAL-TIME tests. No VM, no build beyond forcing evaluation: nothing here starts lldap, binds a
 # port, performs an OIDC round trip, or runs any acting code at all -- posix.nix has none to run in
 # the first place. Two independent groups, kept separate because they prove different things about
-# different modules, the same split this repo had on both sides before the merge:
+# different modules:
 #
 #   `modules-evaluate` -- every module this flake exports (lldap, pocket-id, posix) composed into
 #   one NixOS system from examples/host/configuration.nix, forcing every assertion each one makes.
-#   Unchanged in spirit from this repo's first `nix flake check`, back when it was named nixid and
-#   composed only lldap+pocket-id (see README's "Status") -- `nixiamModules` is `self.nixosModules`
-#   in full now, so posix rides along too, composed but disabled (examples/host declares no
-#   `nixiam.posix`), which is itself the running proof that an unused registry costs the identity-
-#   provider stack nothing. examples/host is deliberately NOT where posix gets exercised for real
-#   -- see `eval-tests` below for that.
+#   `nixiamModules` is `self.nixosModules` in full, so posix rides along too, composed but disabled
+#   (examples/host declares no `nixiam.posix`), which is itself the running proof that an unused
+#   registry costs the identity-provider stack nothing. examples/host is deliberately NOT where
+#   posix gets exercised for real -- see `eval-tests` below for that.
 #
 #   `eval-tests` -- modules/posix.nix's own five check groups (`posix-purity`, `module`,
-#   `podSecurity`, `backend-parity`, `example`), unchanged, carried over verbatim from the
-#   standalone nixposix repo's own checks/default.nix when that repo folded back into this one as
-#   `nixiam.posix`. See each group's own comment below for what it proves. `example` composes
-#   examples/posix-registry/configuration.nix (renamed from nixposix's own examples/host to avoid
-#   colliding with THIS repo's own examples/host, the lldap+pocket-id fixture above) -- posix
-#   ALONE, deliberately never alongside lldap/pocket-id: the purity proof needs to see posix's
-#   effect in isolation against a bare system, and the backend-parity proof exercises
-#   system-manager, which lldap/pocket-id have never been assessed against (see README's "What
-#   this deliberately does not do").
+#   `podSecurity`, `backend-parity`, `example`). See each group's own comment below for what it
+#   proves. `example` composes examples/posix-registry/configuration.nix (a separate directory from
+#   THIS repo's own examples/host, the lldap+pocket-id fixture above) -- posix ALONE, deliberately
+#   never alongside lldap/pocket-id: the purity proof needs to see posix's effect in isolation
+#   against a bare system, and the backend-parity proof exercises system-manager, which
+#   lldap/pocket-id have never been assessed against (see README's "What this deliberately does
+#   not do").
 #
 #   Two more groups, `users-registry` and `lldap-reconcile`, prove modules/users.nix and
 #   modules/lldap-reconcile.nix the same way: every assertion in both directions, plus the one

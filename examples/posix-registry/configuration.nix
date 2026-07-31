@@ -2,8 +2,7 @@
 # that runs at all. This is the concrete proof of the claim modules/posix.nix's own header makes
 # and checks/default.nix's `posix-purity` group enforces: a host can depend on this repo for
 # nothing but the uid/gid table and pay zero systemd units, zero `environment.systemPackages`
-# entries, and zero `pkgs` cost -- exactly as true for nixiam as it was for the standalone nixposix
-# repo this file was carried over from unchanged (down to the option values), namespace aside.
+# entries, and zero `pkgs` cost.
 #
 # Composed with ONLY `nixosModules.posix` by both the `posix-purity` group's own alone-vs-bare
 # comparison and its backend-parity check (NixOS vs. system-manager) -- deliberately never

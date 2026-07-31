@@ -67,12 +67,10 @@
 #      -- every other secret it takes has a normal `*_FILE` option this
 #      module can point at a path instead.
 #
-# No pinned/patched lldap build ships here (a previous, unpublished version
-# of this module carried one, version-coupled to a specific nixpkgs
-# revision via an override argument name that nixpkgs itself renamed on an
-# unrelated bump, breaking evaluation for days). `package` below is a plain
-# `pkgs.lldap` by default; see that option for the one real caveat that
-# survives the simplification.
+# No pinned/patched lldap build ships here -- an override argument name tied to one nixpkgs
+# revision is fragile: nixpkgs has renamed such arguments on an unrelated bump before, breaking
+# evaluation outright. `package` below is a plain `pkgs.lldap` by default; see that option for
+# the one real caveat that survives the simplification.
 #
 # A cross-host POSIX uid/gid registry -- a completely different question (a host/container
 # uid/gid, not a human's login credential) -- also lives in this repo, as modules/posix.nix
