@@ -21,23 +21,27 @@
     in
     {
       # ---------------------------------------------------------------
-      # Five independently toggleable pieces under one `nixiam.*` namespace -- IAM in full: WHO a
+      # Six independently toggleable pieces under one `nixiam.*` namespace -- IAM in full: WHO a
       # human is (lldap, the LDAP directory; users, the declarative human-identity registry
       # projected into it), how they PROVE it (pocket-id, the OIDC/SSO provider in front of that
-      # directory), WHAT a host/container identity is allowed to touch (posix, the cross-host
-      # uid/gid registry + its derived Kubernetes securityContext), and how a declared human
-      # actually LANDS in the running directory (lldap-reconcile, the mechanism that reads `users`
-      # and converges it against lldap's own GraphQL API). There is no shared "core" engine to opt
-      # into (unlike nixnet's core+providers shape) -- import any one on its own, lldap+pocket-id
-      # together for the common identity-provider pairing (see README for the one piece of that
-      # pairing that stays manual), users+lldap-reconcile together for declarative human-identity
-      # provisioning, or posix alone on a host that runs no service at all.
+      # directory; vaultwarden, a password vault pocket-id can optionally front), WHAT a
+      # host/container identity is allowed to touch (posix, the cross-host uid/gid registry + its
+      # derived Kubernetes securityContext), and how a declared human actually LANDS in the running
+      # directory (lldap-reconcile, the mechanism that reads `users` and converges it against
+      # lldap's own GraphQL API). There is no shared "core" engine to opt into (unlike nixnet's
+      # core+providers shape) -- import any one on its own, lldap+pocket-id together for the common
+      # identity-provider pairing (see README for the one piece of that pairing that stays manual),
+      # vaultwarden alongside pocket-id for SSO-fronted vault login (see vaultwarden.nix's own
+      # header for why the master password stays regardless), users+lldap-reconcile together for
+      # declarative human-identity provisioning, or posix alone on a host that runs no service at
+      # all.
       #
-      # lldap and pocket-id are named after their actual upstream project, not an abstract role --
-      # see each module's own header for why (a fake generic interface with exactly one
-      # implementation behind it documents a boundary that doesn't exist). posix and users are
-      # pure data with no upstream project behind either -- see their own headers for why that
-      # boundary is load-bearing, and why it costs nothing for even the smallest host to import.
+      # lldap, pocket-id and vaultwarden are named after their actual upstream project, not an
+      # abstract role -- see each module's own header for why (a fake generic interface with
+      # exactly one implementation behind it documents a boundary that doesn't exist). posix and
+      # users are pure data with no upstream project behind either -- see their own headers for why
+      # that boundary is load-bearing, and why it costs nothing for even the smallest host to
+      # import.
       # lldap-reconcile is the one piece here that is a mechanism rather than a table or a
       # service-in-itself: it acts on `users`, against a running lldap, and nothing else in this
       # repo may act on that table at all -- see modules/users.nix's own header for that split.
@@ -47,6 +51,11 @@
       nixosModules.posix = ./modules/posix.nix;
       nixosModules.users = ./modules/users.nix;
       nixosModules."lldap-reconcile" = ./modules/lldap-reconcile.nix;
+      # vaultwarden -- a self-hosted password vault, pocket-id's own SSO wired in as an OPTIONAL
+      # front door (master password always stays as break-glass; see the module's own header for
+      # why). NixOS-only, same as lldap/pocket-id (an actual service with a `pkgs` argument and a
+      # systemd unit) -- unlike posix/users, which are pure data and reach system-manager/darwin too.
+      nixosModules.vaultwarden = ./modules/vaultwarden.nix;
 
       # posix.nix only -- see its own header for why it ports cleanly to every backend an
       # operator manages: no `pkgs` argument, no `systemd.services`, nothing NixOS-specific to be

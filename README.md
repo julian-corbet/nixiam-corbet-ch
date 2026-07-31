@@ -119,14 +119,23 @@ this registry, never the other way around.
   that membership), and REPORTS — never silently removes — anything lldap
   has that the registry does not declare. The one, deliberately narrow,
   opt-in exception is covered in the same section below.
+- **`vaultwarden.nix`** — a self-hosted, Bitwarden-compatible password
+  vault, with pocket-id wireable in as an OPTIONAL OIDC/SSO front door
+  (`nixiam.vaultwarden.sso.*`) alongside — never instead of — the master
+  password. Manages the vaultwarden PROCESS only (listener, database
+  backend, a pinned uid/gid), the same non-goal `lldap.nix` states for
+  itself: what's actually stored in the vault is live state this module
+  never touches. See the module's own header for why the master password
+  stays even with SSO on.
 
-lldap and pocket-id are named after the real upstream project behind them,
-not an abstract role ("ldap-directory", "oidc-provider") — a generic
-interface with exactly one implementation behind it documents a boundary
-that doesn't exist. If a second directory or SSO backend is ever added
-here, it gets its own module. `posix.nix` and `users.nix` have no upstream
-project behind them at all — both are this repo's own pure-data tables,
-named for what they hold rather than what they wrap.
+lldap, pocket-id and vaultwarden are named after the real upstream project
+behind them, not an abstract role ("ldap-directory", "oidc-provider",
+"password-vault") — a generic interface with exactly one implementation
+behind it documents a boundary that doesn't exist. If a second directory,
+SSO, or vault backend is ever added here, it gets its own module.
+`posix.nix` and `users.nix` have no upstream project behind them at all —
+both are this repo's own pure-data tables, named for what they hold rather
+than what they wrap.
 
 ## The human identity registry, and the line that makes it safe
 
@@ -605,15 +614,16 @@ runtime, so both are hard failures rather than warnings.
 
 ```
 nixiam/
-  flake.nix                            # nixosModules.{lldap,pocket-id,posix,users,lldap-reconcile}; systemManagerModules/darwinModules.posix
+  flake.nix                            # nixosModules.{lldap,pocket-id,vaultwarden,posix,users,lldap-reconcile}; systemManagerModules/darwinModules.posix
   modules/
     lldap.nix
     pocket-id.nix
+    vaultwarden.nix                    # password vault; optional pocket-id SSO front door
     posix.nix
     users.nix                          # the human identity registry -- pure data
     lldap-reconcile.nix                # the mechanism: reads users.nix, converges a running lldap
   checks/
-    default.nix                        # modules-evaluate (all five composed); eval-tests (posix-purity, module, podSecurity, backend-parity, example, users-registry, lldap-reconcile)
+    default.nix                        # modules-evaluate (all six composed); eval-tests (posix-purity, module, podSecurity, backend-parity, example, users-registry, lldap-reconcile)
   examples/
     host/                              # lldap + pocket-id composed together
     posix-registry/                    # posix alone -- the registry-only fixture the purity/backend-parity checks run against
