@@ -49,6 +49,15 @@
       nixosModules.lldap = ./modules/lldap.nix;
       nixosModules."pocket-id" = ./modules/pocket-id.nix;
       nixosModules.posix = ./modules/posix.nix;
+      # The guard that makes `posix` a contract instead of a suggestion: it compares the registry's
+      # numbers against the accounts this host actually creates, and fails the build when they
+      # disagree. NixOS-only on purpose (`config.users.users` exists nowhere else), which is why it
+      # is a second file rather than a few lines inside the plane-agnostic posix.nix.
+      #
+      # Compose it wherever `posix` is composed. It is inert until a registry entry and a system
+      # account of that name both exist, so adding it fleet-wide changes no evaluation -- and it is
+      # what makes the FIRST registry entry safe to add, so it wants to be in place beforehand.
+      nixosModules."posix-applied" = ./modules/posix-applied.nix;
       nixosModules.users = ./modules/users.nix;
       nixosModules."lldap-reconcile" = ./modules/lldap-reconcile.nix;
       # vaultwarden -- a self-hosted password vault, pocket-id's own SSO wired in as an OPTIONAL

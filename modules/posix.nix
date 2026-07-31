@@ -50,9 +50,9 @@
 # (WHAT a workload is allowed to touch, this module's entire job) belong in the same repo as WHO a
 # human is (lldap) and how they PROVE it (pocket-id) -- three answers to "who/what is this and what
 # can it do", not one repo per upstream project that happens to touch identity. See this repo's
-# README, "Why posix folded back in", for the full argument, and "Where the POSIX registry was"
-# for the exact option-path change (`nixposix.<x>` -> `nixiam.posix.<x>`) every consumer that read
-# it from the standalone nixposix repo needs to make.
+# README, "Why posix folded back in", for the full argument and the exact option-path change
+# (`nixposix.<x>` -> `nixiam.posix.<x>`) every consumer that read it from the standalone nixposix
+# repo needs to make -- including a warning that the cutover fails SILENTLY, not loudly.
 #
 # The purity check earns its keep here for a reason that has not changed across either home: this
 # module is exported as `nixosModules`, `systemManagerModules`, AND `darwinModules` from the exact
@@ -151,6 +151,37 @@ let
           reserved for exactly this purpose (e.g. 3000 and up), one at a
           time, in the order identities are added -- never reused, even
           after an identity is retired.
+        '';
+      };
+
+      encountered = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "grafana's own image runs as 472 and chowns nothing at startup";
+        description = ''
+          Set this ONLY for an identity whose number was ENCOUNTERED rather than CHOSEN -- fixed by
+          something outside this registry, so it is not ours to move -- and say in one sentence
+          WHERE it comes from. Presence of a reason exempts this identity from `identityRange`;
+          absence means the band applies.
+
+          Two kinds qualify. An upstream image or on-disk format that baked the number in; and a
+          system-wide convention that owns a range outright -- an LXC/LXD idmap base at 100000,
+          which is what `/etc/subuid` allocates and what a container's whole remapped block is
+          anchored to. The band is for single-process service identities we hand out; neither of
+          those is one, and widening the band to swallow them would be worse than exempting them:
+          a range stretched to 165536 silently admits systemd's own DynamicUser allocations
+          (61184-65519), which is exactly the host-allocated accident this check exists to reject.
+
+          The distinction is the one the `uid` option above already draws. Real examples from a
+          running fleet: a Postgres data directory at 26, an `www-data`-based image at 33, grafana
+          at 472, the linuxserver.io family at 911. Those cannot be renumbered by declaring a
+          different number here -- the image would start, chown nothing, and fail to read its own
+          data.
+
+          A free-form STRING rather than a boolean, deliberately. `encountered = true;` is a flag
+          anyone can copy onto the next identity to silence the check; a sentence naming the image
+          or format that fixed the number is a claim someone can go verify, and it is the only
+          thing distinguishing "upstream forces this" from "I did not want to migrate today".
         '';
       };
 
@@ -322,7 +353,26 @@ let
     filter (names: length names > 1) (attrValues grouped);
 
   uidCollisions = duplicatesOf (ident: ident.uid);
-  gidCollisions = duplicatesOf resolvedGid;
+
+  # gid collisions are checked ACROSS ALL THREE TABLES, not within each. A gid is one number in one
+  # kernel namespace: an identity's UPG gid colliding with a shared group, or a device group
+  # colliding with either, grants exactly the same unintended access as two identities sharing one.
+  # Checking each table against only itself would have left the two most likely collisions -- the
+  # ones that cross a table boundary, where no single declaration looks wrong -- entirely unguarded,
+  # and splitting `groups` in two made that gap wider rather than narrower.
+  gidClaims =
+    (mapAttrsToList (n: i: { gid = resolvedGid i; who = "identities.${n}"; }) cfg.identities)
+    ++ (mapAttrsToList (n: g: { gid = g; who = "groups.${n}"; }) cfg.groups)
+    ++ (mapAttrsToList (n: g: { gid = g; who = "deviceGroups.${n}"; }) cfg.deviceGroups);
+
+  gidCollisions =
+    let
+      grouped = foldl'
+        (acc: c: let k = toString c.gid; in acc // { ${k} = (acc.${k} or [ ]) ++ [ c.who ]; })
+        { }
+        gidClaims;
+    in
+    filter (whos: length whos > 1) (attrValues grouped);
 in
 {
   options.nixiam.posix = {
@@ -398,6 +448,94 @@ in
       '';
     };
 
+    deviceGroups = mkOption {
+      type = types.attrsOf types.int;
+      default = { };
+      example = { video = 401; render = 402; input = 404; };
+      description = ''
+        Groups whose NAME is fixed by the platform -- the device, session and admin groups a distro
+        and its udev rules already know about (`wheel`, `video`, `render`, `audio`, `input`, `kvm`,
+        `seat`, `storage`, `tty`, ...). Split out of `groups` because the two tables need OPPOSITE
+        number policies, not because they are conceptually different kinds of thing.
+
+        A device group must sit LOW, below the floor a distro's dynamic allocator starts from
+        (`SYS_GID_MIN`, 500 on Arch), so that `systemd-sysusers` can never allocate into the band
+        and undo the convergence. A shared group in `groups` must sit HIGH, in the same
+        deliberately-reserved band as `identities`, for the opposite reason: nothing else hands
+        those numbers out.
+
+        One table with one policy could only serve both by checking neither, which is what it did.
+      '';
+    };
+
+    deviceGroupRange = mkOption {
+      type = types.submodule {
+        options = {
+          lower = mkOption { type = types.ints.positive; default = 400; };
+          upper = mkOption { type = types.ints.positive; default = 499; };
+        };
+      };
+      default = { };
+      description = ''
+        The band `deviceGroups` numbers must fall inside. The upper bound matters more than the
+        lower: it must stay below the lowest `SYS_GID_MIN` among the distros in the fleet (500 on
+        Arch), because above that line a package install can dynamically allocate the same number
+        for something else and the whole point of pinning is lost.
+      '';
+    };
+
+    identityRange = mkOption {
+      type = types.submodule {
+        options = {
+          lower = mkOption { type = types.ints.positive; default = 3000; };
+          upper = mkOption { type = types.ints.positive; default = 3999; };
+        };
+      };
+      default = { };
+      description = ''
+        The band `identities` uid/gid numbers must fall inside. Asserted, not advised.
+
+        A cross-host registry only means anything if its numbers are ones no host will hand out on
+        its own, and the ranges below it are exactly the ranges that get handed out:
+
+        - Under 1000 is the system range. NixOS and every distro allocate here AUTOMATICALLY,
+          descending from 999, whenever an account is created without an explicit number. Those
+          allocations are recorded in host-local state, so the same service gets 995 on one machine
+          and something else on the next -- which is the precise failure this registry exists to
+          prevent. Adopting a number a host already auto-allocated (995, say) writes that accident
+          into the fleet's shared vocabulary and guarantees a future collision, because the next
+          host is free to give 995 to something else entirely.
+        - 1000 upward is where human logins begin.
+
+        So service identities get their own band, deliberately above both. The default matches the
+        number `groups`' own documentation already uses in its example (3100).
+
+        WIDEN IT IF YOU MUST, but do it here, visibly, once -- rather than by dropping an
+        out-of-band number into `identities` and having nothing say so.
+
+        `groups` IS checked against this same band -- it holds cross-host shared groups this fleet
+        hands out, which is exactly what the band is for. Platform-named device groups live in
+        `deviceGroups` instead, with their own low band, because they need the opposite policy.
+      '';
+    };
+
+    # A single lookup surface over all three tables. The split above is about which NUMBER POLICY
+    # applies, never about where a consumer has to look: a dataset can be owned by a device group
+    # or a shared one, and a resolver that had to know which table a name lived in would be
+    # answering a question about this module's internals rather than about the fleet.
+    allGroups = mkOption {
+      type = types.attrsOf types.int;
+      readOnly = true;
+      default = cfg.deviceGroups // cfg.groups;
+      defaultText = "deviceGroups // groups";
+      description = ''
+        Every declared group name to its gid, `deviceGroups` and `groups` merged. Read-only, and
+        the thing a consumer resolving a group NAME should read -- see `nixstorage`'s reconciler
+        and `nixmail`'s stalwart module, both of which resolve a name they were given rather than
+        choosing which table it ought to have come from.
+      '';
+    };
+
     podSecurity = mkOption {
       type = types.attrsOf (types.submodule {
         options = {
@@ -470,16 +608,104 @@ in
       (names: {
         assertion = false;
         message = ''
-          nixiam.posix.identities: gid ${toString (resolvedGid cfg.identities.${elemAt names 0})}
-          is claimed by more than one identity after UPG resolution
-          (an unset `gid` resolves to that identity's own `uid`): ${concatStringsSep ", " names}.
-          Same failure as the uid collision above, one level removed: any
-          identity in the group can now read anything group-readable that
-          belongs to any other member of it. Give every identity its own
-          gid, or set `gid` explicitly on the ones that must genuinely
-          share one.
+          nixiam.posix: one gid is claimed by more than one declaration:
+          ${concatStringsSep ", " names}
+
+          Checked across `identities` (after UPG resolution -- an unset `gid` resolves to that
+          identity's own `uid`), `groups`, and `deviceGroups`, because a gid is one number in one
+          kernel namespace no matter which table declared it. Same failure as the uid collision
+          above, one level removed: everything holding this gid can read anything group-readable
+          belonging to anything else holding it.
+
+          A collision that crosses two tables is the likely one, and the hard one to spot by eye:
+          neither declaration looks wrong on its own, and they are usually in different files.
+
+          Give each its own gid, or -- if two things genuinely must share one -- say so by pointing
+          both at the same entry rather than by writing the number twice.
         '';
       })
-      gidCollisions;
+      gidCollisions
+    ++ map
+      (name:
+        let
+          ident = cfg.identities.${name};
+          r = cfg.identityRange;
+          offenders =
+            lib.optional (ident.uid < r.lower || ident.uid > r.upper) "uid ${toString ident.uid}"
+            ++ lib.optional
+              (resolvedGid ident < r.lower || resolvedGid ident > r.upper)
+              "gid ${toString (resolvedGid ident)}";
+        in
+        {
+          assertion = false;
+          message = ''
+            nixiam.posix.identities.${name}: ${concatStringsSep " and " offenders} falls outside
+            nixiam.posix.identityRange (${toString r.lower}-${toString r.upper}).
+
+            A number below 1000 is one the system allocates BY ITSELF, descending from 999, for any
+            account created without an explicit uid -- and it records that choice in host-local
+            state. Publishing such a number as a fleet-wide fact does not make it fleet-wide; it
+            enshrines one machine's accident and leaves the next machine free to hand the same
+            number to something else. A number at or above 1000 is in human-login territory.
+
+            This most often means an identity was adopted by copying whatever the host had already
+            auto-allocated. That is the one adoption route that cannot work: pick a number in the
+            band, and migrate the data to it.
+
+            If this identity genuinely must sit outside the band, widen `identityRange` -- once,
+            visibly, with the reason -- rather than leaving the number unexplained here.
+          '';
+        })
+      (lib.filter
+        (name:
+          let i = cfg.identities.${name}; r = cfg.identityRange; in
+          # An identity whose number was ENCOUNTERED rather than chosen is exempt -- see the
+          # `encountered` option. Postgres at 26 and grafana at 472 are not drift to be corrected;
+          # they are facts about someone else's image, and a band assertion that cannot express
+          # that would simply be widened until it asserted nothing.
+          i.encountered == null
+          && (i.uid < r.lower || i.uid > r.upper
+            || resolvedGid i < r.lower || resolvedGid i > r.upper))
+        (attrNames cfg.identities))
+
+    # `groups` shares identities' band -- both are numbers this fleet hands out.
+    ++ map
+      (name: {
+        assertion = false;
+        message = ''
+          nixiam.posix.groups.${name} = ${toString cfg.groups.${name}} falls outside
+          nixiam.posix.identityRange (${toString cfg.identityRange.lower}-${toString cfg.identityRange.upper}).
+
+          `groups` holds cross-host shared groups THIS fleet hands out, so it shares the band with
+          `identities` for the same reason: nothing else allocates there.
+
+          If this is a platform-named device group (`video`, `render`, `input`, `wheel`, ...) it is
+          in the wrong table -- those go in `deviceGroups`, which has its own low band precisely
+          because they must sit below a distro's dynamic-allocation floor.
+        '';
+      })
+      (lib.filter
+        (n: let g = cfg.groups.${n}; r = cfg.identityRange; in g < r.lower || g > r.upper)
+        (attrNames cfg.groups))
+
+    # `deviceGroups` gets the OPPOSITE bound, and the upper one is the load-bearing half.
+    ++ map
+      (name: {
+        assertion = false;
+        message = ''
+          nixiam.posix.deviceGroups.${name} = ${toString cfg.deviceGroups.${name}} falls outside
+          nixiam.posix.deviceGroupRange (${toString cfg.deviceGroupRange.lower}-${toString cfg.deviceGroupRange.upper}).
+
+          The upper bound is the one that matters: above a distro's `SYS_GID_MIN` (500 on Arch) a
+          package install can dynamically allocate this same number for something else, and the
+          pinning that this table exists to provide is silently undone on the next machine.
+
+          If this is a shared group this fleet hands out rather than a platform-named device group,
+          it belongs in `groups`, which uses the high band.
+        '';
+      })
+      (lib.filter
+        (n: let g = cfg.deviceGroups.${n}; r = cfg.deviceGroupRange; in g < r.lower || g > r.upper)
+        (attrNames cfg.deviceGroups));
   };
 }
