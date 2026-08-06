@@ -27,7 +27,7 @@
 
     # A shared-group entry too, independent of any one identity -- exercises the other half of
     # the registry this example would otherwise leave untouched.
-    groups.shared-readers = 3100;
+    groups.shared-readers.gid = 3100;
   };
 
   # ── Stubs NixOS demands of any bootable system ───────────────────────────

@@ -306,6 +306,34 @@ let
     };
   };
 
+  groupSubmodule = types.submodule {
+    options = {
+      gid = mkOption {
+        type = types.int;
+        description = ''
+          The one authoritative gid for this shared group. Required, with
+          no default, for the same reason identities require an explicit
+          uid: allocation is a fleet decision and must never depend on a
+          host's local creation order.
+        '';
+      };
+
+      encountered = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "the distro-wide users group is fixed at gid 100";
+        description = ''
+          Set this only when the gid was encountered rather than chosen,
+          and state where it comes from. Presence of the reason exempts
+          this group from `identityRange`; absence means the private band
+          applies. This is the group analogue of
+          `identities.<name>.encountered`, and deliberately uses a reason
+          string rather than a boolean so the exception remains auditable.
+        '';
+      };
+    };
+  };
+
   mkPodSecurityFor = ident:
     if ident.variant == "puid" then {
       # No `runAsUser`/`runAsGroup`, and no `capabilities.drop` -- see
@@ -362,7 +390,7 @@ let
   # and splitting `groups` in two made that gap wider rather than narrower.
   gidClaims =
     (mapAttrsToList (n: i: { gid = resolvedGid i; who = "identities.${n}"; }) cfg.identities)
-    ++ (mapAttrsToList (n: g: { gid = g; who = "groups.${n}"; }) cfg.groups)
+    ++ (mapAttrsToList (n: g: { gid = g.gid; who = "groups.${n}"; }) cfg.groups)
     ++ (mapAttrsToList (n: g: { gid = g; who = "deviceGroups.${n}"; }) cfg.deviceGroups);
 
   gidCollisions =
@@ -414,12 +442,12 @@ in
     };
 
     groups = mkOption {
-      type = types.attrsOf types.int;
+      type = types.attrsOf groupSubmodule;
       default = { };
-      example = { shared-readers = 3100; };
+      example = { shared-readers.gid = 3100; };
       description = ''
         Cross-host GROUP number convergence, independent of the per-app
-        `identities` above -- a plain name-to-gid table for groups that
+        `identities` above -- one structured entry per group that
         exist to be shared BETWEEN identities or hosts (a group several
         otherwise-unrelated services are members of so they can read a
         common tree), rather than one identity's own primary group.
@@ -442,7 +470,7 @@ in
         every machine that had drifted, after the mismatch was already
         causing wrong access. Declaring the number once, here, and having
         every host's own group definition reference
-        `config.nixiam.posix.groups.<name>` instead of a literal, is what
+        `config.nixiam.posix.groups.<name>.gid` instead of a literal, is what
         makes that drift structurally impossible instead of something to
         remember to check.
       '';
@@ -526,8 +554,8 @@ in
     allGroups = mkOption {
       type = types.attrsOf types.int;
       readOnly = true;
-      default = cfg.deviceGroups // cfg.groups;
-      defaultText = "deviceGroups // groups";
+      default = cfg.deviceGroups // mapAttrs (_: group: group.gid) cfg.groups;
+      defaultText = "deviceGroups // mapAttrs (_: group: group.gid) groups";
       description = ''
         Every declared group name to its gid, `deviceGroups` and `groups` merged. Read-only, and
         the thing a consumer resolving a group NAME should read -- see `nixstorage`'s reconciler
@@ -632,7 +660,7 @@ in
           r = cfg.identityRange;
           offenders =
             lib.optional (ident.uid < r.lower || ident.uid > r.upper) "uid ${toString ident.uid}"
-            ++ lib.optional
+              ++ lib.optional
               (resolvedGid ident < r.lower || resolvedGid ident > r.upper)
               "gid ${toString (resolvedGid ident)}";
         in
@@ -660,11 +688,11 @@ in
         (name:
           let i = cfg.identities.${name}; r = cfg.identityRange; in
           # An identity whose number was ENCOUNTERED rather than chosen is exempt -- see the
-          # `encountered` option. Postgres at 26 and grafana at 472 are not drift to be corrected;
-          # they are facts about someone else's image, and a band assertion that cannot express
-          # that would simply be widened until it asserted nothing.
+            # `encountered` option. Postgres at 26 and grafana at 472 are not drift to be corrected;
+            # they are facts about someone else's image, and a band assertion that cannot express
+            # that would simply be widened until it asserted nothing.
           i.encountered == null
-          && (i.uid < r.lower || i.uid > r.upper
+            && (i.uid < r.lower || i.uid > r.upper
             || resolvedGid i < r.lower || resolvedGid i > r.upper))
         (attrNames cfg.identities))
 
@@ -673,7 +701,7 @@ in
       (name: {
         assertion = false;
         message = ''
-          nixiam.posix.groups.${name} = ${toString cfg.groups.${name}} falls outside
+          nixiam.posix.groups.${name}.gid = ${toString cfg.groups.${name}.gid} falls outside
           nixiam.posix.identityRange (${toString cfg.identityRange.lower}-${toString cfg.identityRange.upper}).
 
           `groups` holds cross-host shared groups THIS fleet hands out, so it shares the band with
@@ -685,7 +713,9 @@ in
         '';
       })
       (lib.filter
-        (n: let g = cfg.groups.${n}; r = cfg.identityRange; in g < r.lower || g > r.upper)
+        (n:
+          let g = cfg.groups.${n}; r = cfg.identityRange;
+          in g.encountered == null && (g.gid < r.lower || g.gid > r.upper))
         (attrNames cfg.groups))
 
     # `deviceGroups` gets the OPPOSITE bound, and the upper one is the load-bearing half.

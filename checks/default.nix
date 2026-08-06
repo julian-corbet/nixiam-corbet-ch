@@ -44,8 +44,8 @@ let
       }).config;
     in
     # The string context around the derivation path MUST be discarded. A store path inside a
-    # string is tracked as a build dependency, so keeping it would BUILD an entire NixOS system
-    # rather than evaluate one -- minutes and a multi-gigabyte download versus seconds.
+      # string is tracked as a build dependency, so keeping it would BUILD an entire NixOS system
+      # rather than evaluate one -- minutes and a multi-gigabyte download versus seconds.
     pkgs.writeText "nixiam-host-drvpath"
       (builtins.unsafeDiscardStringContext host.system.build.toplevel.drvPath);
 
@@ -72,7 +72,7 @@ let
         example-app = { uid = 3000; };
         example-linuxserver-app = { uid = 3001; variant = "puid"; };
       };
-      groups.shared-readers = 3100;
+      groups.shared-readers.gid = 3100;
     };
   };
 
@@ -106,6 +106,50 @@ let
         b = { uid = 3001; gid = 3000; };
       };
     };
+  };
+
+  encounteredGroup = {
+    nixiam.posix = {
+      enable = true;
+      domain = "example.com";
+      groups.users = {
+        gid = 100;
+        encountered = "the distro-wide users group is fixed at gid 100";
+      };
+    };
+  };
+
+  chosenGroupOutsidePrivateBand = {
+    nixiam.posix = {
+      enable = true;
+      domain = "example.com";
+      groups.users.gid = 100;
+    };
+  };
+
+  encounteredGroupCollision = {
+    nixiam.posix = {
+      enable = true;
+      domain = "example.com";
+      identities.example = {
+        uid = 100;
+        encountered = "an upstream image fixes this account at uid/gid 100";
+      };
+      groups.users = {
+        gid = 100;
+        encountered = "the distro-wide users group is fixed at gid 100";
+      };
+    };
+  };
+
+  encounteredAppliedGroup = lib.recursiveUpdate encounteredGroup {
+    nixiam.posix.governs = [ "users" ];
+    users.groups.users.gid = 100;
+  };
+
+  mismatchedEncounteredAppliedGroup = lib.recursiveUpdate encounteredGroup {
+    nixiam.posix.governs = [ "users" ];
+    users.groups.users.gid = 101;
   };
 
   # ── fixtures shared by the users-registry / lldap-reconcile groups below ─────────────────────
@@ -246,6 +290,11 @@ let
   nixosBuildFails = extraConfig:
     !(builtins.tryEval (builtins.seq (evalNixosModules [ posixModule bareStubs extraConfig ]).system.build.toplevel true)).success;
 
+  nixosAppliedBuildFails = extraConfig:
+    !(builtins.tryEval (builtins.seq (evalNixosModules [ posixModule nixiamModules."posix-applied" bareStubs extraConfig ]).system.build.toplevel true)).success;
+
+  encounteredGroupCfg = (evalNixosModules [ posixModule bareStubs encounteredGroup ]).nixiam.posix;
+
   moduleResults = [
     (check "module/disabled-registry-builds-fine"
       (!(nixosBuildFails { }))
@@ -266,6 +315,30 @@ let
     (check "module/gid-collision-fails-the-build"
       (nixosBuildFails gidCollision)
       "expected two identities resolving to the same gid after UPG resolution to fail the build, but it succeeded")
+
+    (check "module/encountered-group-outside-private-band-builds"
+      (!(nixosBuildFails encounteredGroup))
+      "a reason-bearing externally fixed group must be allowed outside the private band")
+
+    (check "module/chosen-group-outside-private-band-fails"
+      (nixosBuildFails chosenGroupOutsidePrivateBand)
+      "a group without an encountered reason must remain inside the private band")
+
+    (check "module/encountered-group-still-participates-in-gid-collisions"
+      (nixosBuildFails encounteredGroupCollision)
+      "an encountered group must not bypass cross-table gid collision detection")
+
+    (check "module/encountered-group-projects-through-allGroups"
+      (encounteredGroupCfg.allGroups.users == 100)
+      "allGroups must project a structured encountered group back to its numeric gid")
+
+    (check "module/posix-applied-accepts-matching-encountered-group"
+      (!(nixosAppliedBuildFails encounteredAppliedGroup))
+      "posix-applied must compare the structured group's gid with the real host group")
+
+    (check "module/posix-applied-rejects-mismatched-encountered-group"
+      (nixosAppliedBuildFails mismatchedEncounteredAppliedGroup)
+      "posix-applied must reject a host group whose gid differs from the structured registry entry")
   ];
 
   # ══ Group 3: podSecurity -- the generated product itself, not just its type ═════════════════
@@ -313,6 +386,14 @@ let
     (check "backend-parity/gid-collision-fails-on-both"
       (nixosBuildFails gidCollision && smBuildFails gidCollision)
       "a gid collision should fail identically on both backends")
+
+    (check "backend-parity/encountered-group-builds-on-both"
+      (!(nixosBuildFails encounteredGroup) && !(smBuildFails encounteredGroup))
+      "a reason-bearing encountered group should build identically on both backends")
+
+    (check "backend-parity/chosen-out-of-band-group-fails-on-both"
+      (nixosBuildFails chosenGroupOutsidePrivateBand && smBuildFails chosenGroupOutsidePrivateBand)
+      "a chosen out-of-band group should fail identically on both backends")
   ];
 
   # ══ Group 5: the shipped posix-registry example evaluates on its own ═══════════════════════

@@ -65,7 +65,7 @@ let
     (lib.getAttrs governed identities);
 
   mismatchedGids = lib.filterAttrs
-    (name: gid: (sysGroups.${name}.gid or null) != gid)
+    (name: group: (sysGroups.${name}.gid or null) != group.gid)
     (lib.getAttrs governedGroups groups);
 
   # Declared as governed but with nothing to govern -- almost always a typo in `governs`, or a
@@ -87,12 +87,12 @@ let
     let applied = users.${name}.uid or null;
     in "  ${name}: registry says ${toString ident.uid}, this host applies "
       + (if applied == null
-      then "null (so NixOS auto-allocates a host-local number, which is the whole failure)"
-      else toString applied);
+    then "null (so NixOS auto-allocates a host-local number, which is the whole failure)"
+    else toString applied);
 
-  describeGid = name: gid:
+  describeGid = name: group:
     let applied = sysGroups.${name}.gid or null;
-    in "  ${name}: registry says ${toString gid}, this host applies "
+    in "  ${name}: registry says ${toString group.gid}, this host applies "
       + (if applied == null then "null (auto-allocated, host-local)" else toString applied);
 in
 {
@@ -130,20 +130,21 @@ in
     '';
 
   config.assertions =
-    lib.optional (governedButAbsent != [ ]) {
-      assertion = false;
-      message = ''
-        nixiam.posix.governs names ${lib.concatStringsSep ", " governedButAbsent}, but this host has
-        no registry entry AND system account pair under those names.
+    lib.optional (governedButAbsent != [ ])
+      {
+        assertion = false;
+        message = ''
+          nixiam.posix.governs names ${lib.concatStringsSep ", " governedButAbsent}, but this host has
+          no registry entry AND system account pair under those names.
 
-        Listing a name here asserts "the account this host creates for this name IS the registry's
-        identity". With nothing on one side of that pair there is nothing to check, and a guard that
-        silently governs nothing is the failure mode this whole module exists to prevent -- so it
-        says so instead of passing.
+          Listing a name here asserts "the account this host creates for this name IS the registry's
+          identity". With nothing on one side of that pair there is nothing to check, and a guard that
+          silently governs nothing is the failure mode this whole module exists to prevent -- so it
+          says so instead of passing.
 
-        Either the name is a typo, or the module that used to create that account no longer does.
-      '';
-    }
+          Either the name is a typo, or the module that used to create that account no longer does.
+        '';
+      }
     ++
     lib.optional (mismatchedUids != { }) {
       assertion = false;

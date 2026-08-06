@@ -256,8 +256,14 @@ option path changes as follows:
 | `config.nixid.posix.enable` | `config.nixposix.enable` | `config.nixiam.posix.enable` |
 | `config.nixid.posix.domain` | `config.nixposix.domain` | `config.nixiam.posix.domain` |
 | `config.nixid.posix.identities.<name>` | `config.nixposix.identities.<name>` | `config.nixiam.posix.identities.<name>` |
-| `config.nixid.posix.groups.<name>` | `config.nixposix.groups.<name>` | `config.nixiam.posix.groups.<name>` |
+| `config.nixid.posix.groups.<name>` | `config.nixposix.groups.<name>` | `config.nixiam.posix.groups.<name>.gid` |
 | `config.nixid.posix.podSecurity.<name>` | `config.nixposix.podSecurity.<name>` | `config.nixiam.posix.podSecurity.<name>` |
+
+The current group shape is intentionally a clean break from the earlier
+integer leaf: write `groups.<name> = { gid = 3100; };`, not
+`groups.<name> = 3100;`. The structured entry is what makes a
+reason-bearing `encountered` exception possible without adding a second
+group table or weakening the private-band assertion globally.
 
 Known real consumers at the time of this fold-back, checked by direct
 source read: `nixstorage`'s `modules/reconciler.nix`, `nixmail`'s
@@ -565,9 +571,11 @@ deliberately does not do" above.
   this identity's data at all). Every field's own description covers a
   specific, real failure mode it exists to prevent — read them before
   guessing at a value.
-- `groups.<name>` — a plain name-to-gid table for groups shared BETWEEN
-  identities or hosts, independent of any one identity's own primary
-  group.
+- `groups.<name>` — groups shared BETWEEN identities or hosts,
+  independent of any one identity's own primary group. Each entry has a
+  required `gid` and optional reason-bearing `encountered` string. The
+  latter is for externally fixed groups such as a distro's `users(100)`;
+  without it the gid must remain inside `identityRange`.
 - `podSecurity.<name>` — read-only, entirely derived from `identities`:
   the Kubernetes `securityContext`, split into `pod`/`container`/`env` to
   match how Kubernetes itself splits one across those three places.
@@ -575,10 +583,11 @@ deliberately does not do" above.
   no separate place to declare a pod's `runAsUser` by hand, and that
   absence is the whole point.
 
-Two collision assertions fire whenever `nixiam.posix.enable` is true: no
-two identities may share a uid, and no two identities may resolve to the
-same gid after UPG resolution — both invisible at declaration time and at
-runtime, so both are hard failures rather than warnings.
+Collision assertions fire whenever `nixiam.posix.enable` is true: no two
+identities may share a uid, and no two declarations across identities,
+shared groups, and device groups may claim the same resolved gid. An
+`encountered` exception changes range policy only; it never bypasses
+collision detection.
 
 `nixiam.users.*` (`modules/users.nix`):
 
