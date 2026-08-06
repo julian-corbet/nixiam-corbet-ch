@@ -98,9 +98,9 @@
 # `User=`, no `DynamicUser`) — both reason that the one thing the unit needs (reading a
 # root-owned runtime secret file) is exactly what a hardening profile would take away. This module
 # follows the same default for the same reason, UNVERIFIED rather than silently assumed: whether
-# `credentialFile`'s real-world permissions would even allow a narrower, non-root reader has not
-# been checked against a real deployment — see `experiments/README.md` for this flagged as open
-# rather than quietly decided either way.
+# `credentialFile` permissions would even allow a narrower, non-root reader is not proven by this
+# repository's tests — see `experiments/README.md` for this flagged as open rather than quietly
+# decided either way.
 { config, lib, pkgs, ... }:
 
 with lib;

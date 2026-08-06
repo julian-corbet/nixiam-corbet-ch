@@ -16,10 +16,9 @@
 # module manages the lldap SERVER (the process, its listeners, its systemd
 # unit) and nothing else. It deliberately exposes no options for declaring
 # users, groups, group memberships, passwords, or alias VALUES -- the
-# records living inside the directory are not configuration, they are data,
-# and a real deployment this module was extracted from lost real user data
-# once to a declarative bootstrap job that matched existing directory
-# entries by DN and overwrote them on every apply. Provision identity
+# records living inside the directory are not process configuration, they are
+# data. A declarative bootstrap that matches existing entries by DN and
+# overwrites them on every apply can destroy user-managed state. Provision identity
 # out-of-band, through lldap's own admin UI/API or a restore from backup,
 # and treat the running database as live state you back up -- never as
 # something Nix should assert into existence. (The DIRECTORY SCHEMA --
@@ -49,9 +48,7 @@
 # Deviations from plain `services.lldap`, and why each one exists:
 #
 #   1. Static system user, uid/gid forced non-dynamic (see `uid` below for
-#      the full failure chain this fixes -- upstream's own default broke a
-#      real deployment in a way whose symptom pointed nowhere near its
-#      cause). The correct long-term fix is a nixpkgs PR against
+#      the full failure chain this fixes). The correct long-term fix is a nixpkgs PR against
 #      `services.lldap` itself; this module's override is a stopgap, not a
 #      permanent home for the fix.
 #   2. `StateDirectory=` dropped in favor of `ReadWritePaths=` when your
@@ -104,8 +101,7 @@ let
     concatMapStringsSep "," (p: "dc=${p}") (splitString "." domain);
 
   # Best-effort, boot-time-only check for `exposeOnInterfaces` -- see that
-  # option's description for the real production incident this is trying
-  # to catch a repeat of. Interface names are plain strings to the Nix
+  # option's description for the failure this is trying to catch. Interface names are plain strings to the Nix
   # module system; nothing at build time can check they name a real,
   # live interface (many VPN/mesh overlay interfaces are created by a
   # userspace daemon at runtime and never appear in any static NixOS
@@ -357,8 +353,8 @@ in
         explicitly forces `DynamicUser = false` on the service below --
         never left at upstream's own default.
 
-        Why this matters, from a real production failure: `services.lldap`
-        upstream defaults to `DynamicUser = true`. Under DynamicUser, the
+        Why this matters: `services.lldap` upstream defaults to
+        `DynamicUser = true`. Under DynamicUser, the
         `lldap` user does not exist yet at the point `systemd-tmpfiles`
         runs at boot, so any tmpfiles rule that chowns lldap's data
         directory to that user (needed whenever the directory is, say, a

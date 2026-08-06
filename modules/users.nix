@@ -1,8 +1,7 @@
 # modules/users.nix
 #
-# THE HUMAN IDENTITY REGISTRY: one entry per real person, `nixiam.users.<name>`, declaring the
-# three things about a human that are safe to put in a world-readable, deploy-time file --
-# existence, which lldap groups they belong to, and (optionally) which entry in
+# THE HUMAN IDENTITY REGISTRY SCHEMA: `nixiam.users.<name>` declares
+# existence, lldap groups, and optionally which entry in
 # `nixiam.posix.identities` is THEIR uid/gid -- and nothing else. THIS MODULE IS PURE DATA, the
 # same discipline `posix.nix` in this same repo holds itself to: no `pkgs` argument, no
 # `systemd.services`, nothing that ever runs. The mechanism that actually reads this table and
@@ -24,8 +23,9 @@
 # does not just corrupt a file, it locks a real person out of everything at once, or leaks the one
 # secret that unlocks every directory entry simultaneously.
 #
-#   CONFIGURATION -- declared here, safe to commit to a public repo, safe to hand to anyone who can
-#   already read this file:
+#   NON-SECRET DEPLOYMENT CONFIGURATION -- declared through this public
+#   schema, but instantiated in private Infra because the complete table maps
+#   real people and authorization:
 #     - that this name exists as a human identity at all
 #     - which lldap groups they belong to (additive membership only -- see `lldap-reconcile.nix`
 #       for exactly what "additive" is enforced to mean)
@@ -140,9 +140,8 @@ let
 
       # ── person or mailbox: the same directory holds both, and they are not alike ──────────
       #
-      # Derived from the live directory rather than guessed: of 18 entries, 11 belong to exactly
-      # one group (`mail`) and nothing else. Those exist because the mail server authenticates
-      # against this directory -- they are mailboxes, not people. Modelling them as people makes
+      # Directory entries can represent mailboxes as well as people. Modelling both
+      # as people makes
       # two different assertions wrong at once: a mailbox legitimately has no SSO group membership,
       # while a person with none is usually a provisioning mistake worth noticing.
       #
@@ -287,11 +286,10 @@ in
 {
   # ── Groups exist in their own right, not merely as a side effect of membership ──────────────
   #
-  # Learned from the live directory, and from being wrong about it: three of its 47 groups have ZERO
-  # members, and a zero-member group is NOT dead. A group is live when something REFERENCES it -- an
-  # application's role mapping -- not when someone currently sits in it. `planka_owner` with no
-  # members means "nobody currently holds owner", not "nobody can", and the mapping that makes it
-  # real lives in that application's own configuration, not anywhere this module can see.
+  # A zero-member group is not necessarily dead. A group is live when something REFERENCES it -- an
+  # application's role mapping -- not only when someone currently sits in it. An empty role group
+  # can mean "nobody currently holds this role", while the mapping that makes it real lives in that
+  # application's own private configuration, not anywhere this module can see.
   #
   # Deriving the group set from users' membership lists alone therefore cannot express reality: an
   # empty-but-live group is invisible to the declaration, and would be a deletion candidate the day

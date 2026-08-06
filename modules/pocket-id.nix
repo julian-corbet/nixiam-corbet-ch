@@ -133,8 +133,7 @@ in
         goes through tmpfiles regardless).
 
         Also the path this module's own `ExecStartPre` legacy-database
-        self-heal step reads and writes -- a real trap found running
-        pocket-id in production: pocket-id v1 kept its SQLite database
+        self-heal step reads and writes: pocket-id v1 kept its SQLite database
         directly at `''${dataDir}/pocket-id.db`; v2 moved it one level
         deeper by default, to `''${dataDir}/data/pocket-id.db` (relative
         to its `WorkingDirectory`). A v2 binary started against a host

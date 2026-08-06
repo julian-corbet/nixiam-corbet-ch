@@ -9,6 +9,12 @@
 # and reads the number back through `config.nixiam.posix.identities.<name>`
 # or `.podSecurity.<name>`.
 #
+# PUBLIC/PRIVATE BOUNDARY: this file owns the public schema, validation and
+# derivation mechanism. Real identity names, UID/GID assignments, domains and
+# policy selections belong in the consuming deployment's private Infra. Tests
+# and examples in this repository are invented fixtures, never a deployment's
+# authoritative registry.
+#
 # THIS MODULE IS PURE DATA. Read that literally: no `systemd.services`, no
 # `environment.systemPackages`, no `pkgs` argument at all, not even a
 # `users.users`/`users.groups` entry -- nothing this module declares ever
@@ -76,8 +82,9 @@
 #     image's problem to solve in its own build, not something a host-side
 #     identity registry can fix by declaring a user nothing on the host
 #     ever reads.)
-#   - No secrets, credentials, or passwords of any kind. This registry is
-#     entirely public-shape numbers and booleans; if a future identity
+#   - No secrets, credentials, or passwords of any kind. The schema is
+#     public, but a real registry's numbers and names remain private
+#     deployment data. If a future identity
 #     genuinely needs a secret (an app that authenticates as itself
 #     somewhere), that belongs in whatever module actually runs that app,
 #     the same way this repo's own lldap module keeps its `jwtSecretFile`
@@ -93,8 +100,8 @@
 # `services.nfs.idmapd` itself, for the same "no runtime component" reason
 # as everything else here).
 #
-# The failure this one shared value exists to prevent is not hypothetical,
-# and it is genuinely nasty to diagnose, because BASIC ownership keeps
+# The failure this one shared value exists to prevent is difficult to
+# diagnose because BASIC ownership keeps
 # working the entire time it is broken. NFSv4 maps uids/gids to and from
 # `name@domain` strings on the wire; if a client's idmapd `Domain=` does
 # not match the server's, idmapd silently falls back to guessing the
@@ -102,13 +109,7 @@
 # guess doesn't match either, every NFSv4 ACL-touching syscall starts
 # paying a failed kernel upcall: `llistxattr` (reading the NFSv4 ACL
 # attribute), `getfacl`, and the per-entry `stat`/`statx` a file manager or
-# shell issues while just listing a directory. Measured cold, on a real
-# host, against a single plain directory:
-#
-#     llistxattr   7.5 s
-#     statx        1.6 s
-#
-# ...for ONE directory. Ordinary AUTH_SYS ownership checks (owner/group/
+# shell issues while just listing a directory. Ordinary AUTH_SYS ownership checks (owner/group/
 # other bits, the numeric uid/gid a `stat()` returns) are completely
 # unaffected, because AUTH_SYS passes uids and gids over the wire as plain
 # NUMBERS -- no name mapping, no idmapd involvement at all. That is exactly
@@ -144,13 +145,9 @@ let
           assertion below for the concrete failure this is designed to
           make impossible instead of merely unlikely.
 
-          A convention that has worked in practice: leave uids below 1000
-          alone (that range is not yours to hand out -- it is whatever a
-          base image already baked in, encountered, not chosen), and hand
-          out numbers for identities you DO control from a private block
-          reserved for exactly this purpose (e.g. 3000 and up), one at a
-          time, in the order identities are added -- never reused, even
-          after an identity is retired.
+          Keep the actual allocation policy in the consuming deployment's
+          private registry. Reserve a deliberate block, avoid platform-owned
+          ranges, and never reuse a number after an identity is retired.
         '';
       };
 
@@ -172,11 +169,9 @@ let
           a range stretched to 165536 silently admits systemd's own DynamicUser allocations
           (61184-65519), which is exactly the host-allocated accident this check exists to reject.
 
-          The distinction is the one the `uid` option above already draws. Real examples from a
-          running fleet: a Postgres data directory at 26, an `www-data`-based image at 33, grafana
-          at 472, the linuxserver.io family at 911. Those cannot be renumbered by declaring a
-          different number here -- the image would start, chown nothing, and fail to read its own
-          data.
+          The distinction is the one the `uid` option above already draws.
+          An upstream image or existing on-disk format may fix a number that
+          cannot be changed merely by declaring a different one here.
 
           A free-form STRING rather than a boolean, deliberately. `encountered = true;` is a flag
           anyone can copy onto the next identity to silence the check; a sentence naming the image

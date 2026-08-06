@@ -39,13 +39,26 @@ as a result.
 and checked in CI. Several independent `nix flake check` groups exist —
 see [Verifying](#verifying) below.
 
-lldap and pocket-id are also running live in a real production deployment
-(a small single-node host, outside this repo), and the identity chain
-behind that deployment's mail stack has been verified end to end. That
-remains the stronger evidence for those two modules — the `modules-evaluate`
-check establishes that they evaluate, not that a login succeeds. There is
-still no automated `nixosTest` starting lldap, binding a port, or
-performing an OIDC round trip.
+The lldap and pocket-id modules have also been exercised by an external
+consumer. That is runtime evidence, but it is deliberately not an identity
+or topology record for this public mechanism repository. The
+`modules-evaluate` check establishes that the modules evaluate, not that a
+login succeeds. There is still no automated `nixosTest` starting lldap,
+binding a port, or performing an OIDC round trip.
+
+## Public mechanism, private registry
+
+This public repository owns the option schema, validation, derived
+`podSecurity` shape and reconciliation mechanism. A consumer's actual account
+names, people, email addresses, group memberships, UID/GID assignments,
+identity domain, endpoints and keys belong in that consumer's private
+infrastructure/secrets repository. They are not secrets in the narrow
+cryptographic sense, but together they are an account and authorization map.
+
+Examples and checks here use invented names and numbers only. Public nixiam
+must never become the canonical numeric/account registry for a real
+deployment; it provides the type-safe mechanism that a private registry
+instantiates.
 
 ## Scope
 
@@ -78,7 +91,7 @@ this registry, never the other way around.
   it deliberately exposes no options for declaring users, groups, or
   passwords. Those are live data, not configuration; provision them
   through lldap's own admin UI/API or a restore from backup. See the
-  module's own header comment for the real production incident behind
+  module's own header comment for the failure mode behind
   its static-uid requirement, and for lldap's own attribute-name
   lowercasing behavior (a trap for anything that reads from it
   case-sensitively).
@@ -153,8 +166,9 @@ CREDENTIAL half of this wrong does not just corrupt a file, it locks a
 real person out of everything at once, or leaks the one secret that
 unlocks every directory entry simultaneously.
 
-**CONFIGURATION** — declared in `nixiam.users.<name>`, safe to commit to a
-public repo:
+**NON-SECRET DEPLOYMENT CONFIGURATION** — declared in
+`nixiam.users.<name>`, but kept in the consuming deployment's private Infra
+because it maps real people and authorization:
 
 - that this name exists as a human identity at all
 - which lldap groups they belong to (additive membership only — see below)
@@ -265,8 +279,8 @@ integer leaf: write `groups.<name> = { gid = 3100; };`, not
 reason-bearing `encountered` exception possible without adding a second
 group table or weakening the private-band assertion globally.
 
-Known real consumers at the time of this fold-back, checked by direct
-source read: `nixstorage`'s `modules/reconciler.nix`, `nixmail`'s
+Known public mechanism consumers at the time of this fold-back, checked by
+direct source read: `nixstorage`'s `modules/reconciler.nix`, `nixmail`'s
 `modules/stalwart.nix`, and `nixarch`'s `modules/device-gids.nix` all read
 `config.nixiam.posix.*` today and needed this path change (from whichever
 of the two older paths they were on). `nixluks` was also checked and does
@@ -274,7 +288,7 @@ of the two older paths they were on). `nixluks` was also checked and does
 registry's defensive-read pattern as prior art in a comment, while reading
 `config.nixstorage.disks` itself; it needs no change.
 
-⚠ **THIS IS A HARD CUTOVER, AND IT FAILS SILENTLY.** All three real
+⚠ **THIS IS A HARD CUTOVER, AND IT FAILS SILENTLY.** All three known
 consumers read the option defensively (`config.nixiam.posix.… or { }`),
 which is exactly why the fix in each case is a one-line path change, never
 a new flake input — none of nixstorage, nixmail, or nixarch take `nixiam`
@@ -346,8 +360,9 @@ for even the smallest host to import:
   `/etc/passwd`. A ZFS chown target and a Kubernetes `runAsUser` both take
   a bare number; neither needs a resolvable `/etc/passwd` line on THIS
   host to mean anything.
-- **No secrets, credentials, or passwords of any kind.** This registry is
-  entirely public-shape numbers and booleans; if a future identity
+- **No secrets, credentials, or passwords of any kind.** The schema is
+  public, but a real registry's numbers, names and policy stay in private
+  Infra. If a future identity
   genuinely needs a secret, that belongs in whatever module actually runs
   that app — the same way this repo's own `lldap.nix` keeps its
   `jwtSecretFile` on itself rather than on the registry.
@@ -378,24 +393,18 @@ anything that maps NAMES across a trust boundary rather than trusting
 numbers directly. Its first, and so far only, real consumer is NFSv4
 idmapd's own `Domain=` setting.
 
-The failure this one shared value exists to prevent is not hypothetical,
-and it is genuinely nasty to diagnose, because BASIC ownership keeps
-working the entire time it is broken. NFSv4 maps uids/gids to and from
+The failure this one shared value exists to prevent is difficult to
+diagnose because BASIC ownership keeps working the entire time it is
+broken. NFSv4 maps uids/gids to and from
 `name@domain` strings on the wire; if a client's idmapd `Domain=` does not
 match the server's, idmapd silently falls back to guessing the domain
 from the client's own DNS search domain instead — and if that guess
 doesn't match either, every NFSv4 ACL-touching syscall starts paying a
 failed kernel upcall: `llistxattr` (reading the NFSv4 ACL attribute),
 `getfacl`, and the per-entry `stat`/`statx` a file manager or shell issues
-while just listing a directory. Measured cold, on a real host, against a
-single plain directory:
-
-```
-llistxattr   7.5 s
-statx        1.6 s
-```
-
-...for ONE directory. Ordinary AUTH_SYS ownership checks (owner/group/
+while just listing a directory. A failed upcall can make ACL-related
+metadata operations extremely slow even for a plain directory. Ordinary
+AUTH_SYS ownership checks (owner/group/
 other bits, the numeric uid/gid a `stat()` returns) are completely
 unaffected, because AUTH_SYS passes uids and gids over the wire as plain
 NUMBERS — no name mapping, no idmapd involvement at all. That is exactly
@@ -454,16 +463,16 @@ instead of something to remember to check.
   # bind DN and password of your choosing. Not a step this flake can do
   # for you — see "What this deliberately does not do".
 
-  # The cross-host POSIX registry -- independent of the two services
-  # above; a host may declare this and neither of them, or vice versa.
+  # Synthetic shape example only. A real POSIX registry belongs in the
+  # consumer's private infrastructure repository.
   nixiam.posix = {
     enable = true;
     domain = "example.org";       # shared NFSv4-idmapd domain; see the module's own header
-    identities.myapp.uid = 3000;  # gid defaults to a User Private Group
+    identities.exampleService.uid = 3000;  # invented fixture value
   };
 
-  # config.nixiam.posix.identities.myapp.uid           -> 3000, for a ZFS chown
-  # config.nixiam.posix.podSecurity.myapp.pod.runAsUser -> 3000, for a k8s pod spec
+  # config.nixiam.posix.identities.exampleService.uid -> 3000
+  # config.nixiam.posix.podSecurity.exampleService.pod.runAsUser -> 3000
   # ...derived from the exact same declaration, so the two can never drift apart.
 
   # The human identity registry -- independent of everything above; declares real people and
