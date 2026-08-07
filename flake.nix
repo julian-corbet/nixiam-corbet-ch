@@ -78,6 +78,8 @@
       systemManagerModules.default = self.systemManagerModules.posix;
       darwinModules.posix = ./modules/posix.nix;
       darwinModules.default = self.darwinModules.posix;
+      systemManagerModules.packages = ./modules/packages.arch.nix;
+      nixosModules.packages = ./modules/packages.nixos.nix;
 
       checks = forAllSystems (system:
         import ./checks {

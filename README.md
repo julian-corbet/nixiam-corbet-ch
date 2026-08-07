@@ -3,6 +3,11 @@
 IAM infrastructure for a self-hosted deployment, packaged as five NixOS
 modules under one flake:
 
+Scope note: nixiam covers identity **and access** — including the tooling by which a host
+reaches a secret at all (`age`, `sops`) and the vault clients an operator recovers with
+(`bitwarden-cli`, `rbw`). Decrypting a secret is an access-control act, so it is filed here
+rather than treated as generic developer tooling.
+
 1. **An identity-provider stack** — an LDAP directory
    ([lldap](https://github.com/lldap/lldap)) and the OIDC/SSO provider
    ([pocket-id](https://github.com/pocket-id/pocket-id)) that sits in front

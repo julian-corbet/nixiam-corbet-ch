@@ -83,6 +83,17 @@ let
     };
   };
 
+  baselineWithMissingPackage = {
+    nixiam.packages.baseline = [
+      "age"
+      "sops"
+      "sudo"
+      "bitwarden-cli"
+      "rbw"
+      "definitely-does-not-exist-in-nixpkgs"
+    ];
+  };
+
   uidCollision = {
     nixiam.posix = {
       enable = true;
@@ -290,6 +301,9 @@ let
   nixosBuildFails = extraConfig:
     !(builtins.tryEval (builtins.seq (evalNixosModules [ posixModule bareStubs extraConfig ]).system.build.toplevel true)).success;
 
+  nixosBuildFailsPackages = extraConfig:
+    !(builtins.tryEval (builtins.seq (evalNixosModules [ nixiamModules.packages bareStubs extraConfig ]).system.build.toplevel true)).success;
+
   nixosAppliedBuildFails = extraConfig:
     !(builtins.tryEval (builtins.seq (evalNixosModules [ posixModule nixiamModules."posix-applied" bareStubs extraConfig ]).system.build.toplevel true)).success;
 
@@ -339,6 +353,16 @@ let
     (check "module/posix-applied-rejects-mismatched-encountered-group"
       (nixosAppliedBuildFails mismatchedEncounteredAppliedGroup)
       "posix-applied must reject a host group whose gid differs from the structured registry entry")
+  ];
+
+  packageResults = [
+    (check "packages/default-baseline-builds-on-nixos"
+      (!(nixosBuildFailsPackages { }))
+      "nixiam packages baseline must resolve on NixOS without failing the build")
+
+    (check "packages/unresolvable-entry-fails-on-nixos"
+      (nixosBuildFailsPackages baselineWithMissingPackage)
+      "a baseline override that names a non-existent nixpkgs package must fail on NixOS")
   ];
 
   # ══ Group 3: podSecurity -- the generated product itself, not just its type ═════════════════
@@ -476,6 +500,7 @@ let
   results =
     purityResults
     ++ moduleResults
+    ++ packageResults
     ++ podSecurityResults
     ++ backendParityResults
     ++ exampleResults
