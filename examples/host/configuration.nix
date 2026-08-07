@@ -45,6 +45,16 @@
     encryptionKeyFile = "/run/secrets/example-pocketid-encryption-key";
   };
 
+  # `modules-evaluate` composes every nixosModule this flake exports (see checks/default.nix),
+  # which pulls in `nixosModules.packages` unconditionally -- it carries no `enable` gate, so
+  # merely being composed installs `nixiam.packages.baseline` into `environment.systemPackages`
+  # here, same as it would on any real consumer. The baseline's `bitwarden` entry currently
+  # resolves to nixpkgs' `bitwarden-desktop`, whose bundled Electron 39.8.10 nixpkgs flags
+  # insecure (upstream EOL) at this lock. A real host importing `nixiam.nixosModules.packages`
+  # needs this same allowance or its build fails the same way; this fixture carries it so the
+  # module composition can still be type-checked end-to-end.
+  nixpkgs.config.permittedInsecurePackages = [ "electron-39.8.10" ];
+
   # ── Stubs NixOS demands of any bootable system ───────────────────────────
   # tmpfs on / could never boot a real machine, which is the point: this exists
   # to type-check modules, not to describe hardware.

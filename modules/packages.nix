@@ -5,6 +5,7 @@
 # - sudo (host maintenance and troubleshooting)
 # - sops (secret lifecycle tooling)
 # - age (crypto envelope/decryption workflows)
+# - bitwarden (desktop GUI client for password-vault bootstrap and recovery paths)
 # - bitwarden-cli (password-vault bootstrap and recovery paths)
 # - rbw (Rust Bitwarden CLI client used by ops scripts)
 #
@@ -13,6 +14,12 @@
 { config, lib, ... }:
 let
   cfg = config.nixiam.packages;
+
+  # nixpkgs renamed its `bitwarden` attribute to `bitwarden-desktop` (the bare name is now a
+  # `throw`-aliased placeholder, not a working derivation) while the pacman package kept the name
+  # `bitwarden`. The baseline below records the pacman/operator-facing name; this map corrects
+  # only the NixOS-facing attribute for the one entry where the two diverge.
+  nixosNameFor = name: { bitwarden = "bitwarden-desktop"; }.${name} or name;
 in
 {
   options.nixiam.packages = {
@@ -21,6 +28,7 @@ in
       type = lib.types.listOf lib.types.str;
       default = [
         "age"
+        "bitwarden"
         "bitwarden-cli"
         "rbw"
         "sops"
@@ -29,6 +37,7 @@ in
       defaultText = lib.literalExpression ''
         [
           "age"
+          "bitwarden"
           "bitwarden-cli"
           "rbw"
           "sops"
@@ -63,8 +72,9 @@ in
       type = lib.types.listOf lib.types.str;
       readOnly = true;
       description = ''
-        NixOS package attribute names (as seen by nixpkgs). The baseline keeps
-        these equal to `nixiam.packages.baseline` for now.
+        NixOS package attribute names (as seen by nixpkgs). Equal to
+        `nixiam.packages.baseline` except where a baseline entry's nixpkgs attribute
+        diverges from its pacman name (see `nixosNameFor` above).
       '';
     };
   };
@@ -72,7 +82,7 @@ in
   config.nixiam.packages = {
     archPackages = lib.unique cfg.baseline;
     aurPackages = [ ];
-    nixosPackages = lib.unique cfg.baseline;
+    nixosPackages = lib.unique (map nixosNameFor cfg.baseline);
   };
 }
 
