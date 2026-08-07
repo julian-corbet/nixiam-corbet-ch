@@ -94,6 +94,24 @@ let
     ];
   };
 
+  # The OTHER way a name fails to resolve: present in nixpkgs, but throwing when forced. See
+  # modules/packages.nixos.nix's own `forceable` for why presence alone cannot be the test.
+  #
+  # `ghostwriter` is a real `throw`-aliased name in nixpkgs today (renamed upstream), which is
+  # what makes this fixture exercise the FORCING path rather than the absence path above. nixpkgs
+  # eventually deletes such aliases outright; on the day that happens this fixture stops being a
+  # throw and becomes an absent name, and the check below still passes for the other reason. It
+  # degrades into a duplicate of the absence test rather than going spuriously red -- so it never
+  # needs chasing, it only quietly stops proving the second path.
+  baselineWithThrowingPackage = {
+    nixiam.packages.baseline = [
+      "age"
+      "sops"
+      "sudo"
+      "ghostwriter"
+    ];
+  };
+
   uidCollision = {
     nixiam.posix = {
       enable = true;
@@ -355,6 +373,9 @@ let
       "posix-applied must reject a host group whose gid differs from the structured registry entry")
   ];
 
+  # The baseline as the modules actually publish it, mapped for each backend.
+  packagesCfg = (evalNixosModules [ nixiamModules.packages bareStubs ]).nixiam.packages;
+
   packageResults = [
     (check "packages/default-baseline-builds-on-nixos"
       (!(nixosBuildFailsPackages { }))
@@ -363,6 +384,23 @@ let
     (check "packages/unresolvable-entry-fails-on-nixos"
       (nixosBuildFailsPackages baselineWithMissingPackage)
       "a baseline override that names a non-existent nixpkgs package must fail on NixOS")
+
+    # Teeth for `forceable`: with existence as the only test, this fixture's package passes the
+    # filter, reaches environment.systemPackages, and the build fails on nixpkgs' own message
+    # instead of the module's assertion -- or does not fail here at all, because forcing
+    # system.build.toplevel to weak head normal form never forces the package list.
+    (check "packages/present-but-throwing-entry-fails-on-nixos"
+      (nixosBuildFailsPackages baselineWithThrowingPackage)
+      "a baseline override naming a package that EXISTS in nixpkgs but throws when forced (a throw-aliased rename, or one held back by an insecure dependency) must fail on NixOS -- presence alone is not resolution")
+
+    # The name map itself, independent of any nixpkgs: pacman kept `bitwarden` while nixpkgs
+    # renamed its attribute to `bitwarden-desktop`, so the two planes must be handed different
+    # strings from the one baseline entry.
+    (check "packages/baseline-maps-bitwarden-per-backend"
+      (builtins.elem "bitwarden-desktop" packagesCfg.nixosPackages
+        && !(builtins.elem "bitwarden" packagesCfg.nixosPackages)
+        && builtins.elem "bitwarden" packagesCfg.archPackages)
+      "the one baseline entry `bitwarden` must reach NixOS as `bitwarden-desktop` and pacman as `bitwarden` -- got nixosPackages: ${builtins.toJSON packagesCfg.nixosPackages}, archPackages: ${builtins.toJSON packagesCfg.archPackages}")
   ];
 
   # ══ Group 3: podSecurity -- the generated product itself, not just its type ═════════════════

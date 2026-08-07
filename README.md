@@ -8,6 +8,14 @@ reaches a secret at all (`age`, `sops`) and the vault clients an operator recove
 (`bitwarden`, `bitwarden-cli`, `rbw`). Decrypting a secret is an access-control act, so it is
 filed here rather than treated as generic developer tooling.
 
+The baseline is declared once under the operator-facing name and mapped per backend, because the
+two package sets do not always agree on it: `bitwarden` is the pacman name, while nixpkgs renamed
+that attribute to `bitwarden-desktop` and kept the old name as a `throw`-aliased placeholder. A
+name is treated as resolvable on NixOS only if it is both present AND forceable — an attribute
+that exists but throws when instantiated (a rename placeholder, or a package held back by a
+dependency marked insecure) is reported by this module's own assertion, naming the package,
+rather than surfacing later as an opaque nixpkgs error during a host build.
+
 1. **An identity-provider stack** — an LDAP directory
    ([lldap](https://github.com/lldap/lldap)) and the OIDC/SSO provider
    ([pocket-id](https://github.com/pocket-id/pocket-id)) that sits in front
